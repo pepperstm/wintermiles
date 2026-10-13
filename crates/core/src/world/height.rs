@@ -183,12 +183,13 @@ impl HeightField {
 
     /// Terrain height ignoring the road: real elevation data if loaded, generated hills otherwise.
     pub fn surroundings(&self, x: f64, z: f64) -> f64 {
-        self.around(x, z, false)
+        self.around(x, z, 1.0)
     }
 
-    /// `calm` leaves out the fine roughness, for ground that is to lie under still water.
-    fn around(&self, x: f64, z: f64, calm: bool) -> f64 {
-        let rough = if calm { 0.0 } else { fbm(x / 23.0, z / 23.0) };
+    /// `roughness` scales the fine unevenness of the ground: none where it is to lie under still
+    /// water or a road, all of it (1) elsewhere.
+    fn around(&self, x: f64, z: f64, roughness: f64) -> f64 {
+        let rough = if roughness <= 0.0 { 0.0 } else { fbm(x / 23.0, z / 23.0) * roughness };
         if let Some(dem) = &self.dem {
             let h = dem.height_at(&self.route, x, z);
             if h.is_finite() {
@@ -209,17 +210,17 @@ impl HeightField {
 
     /// Height of the terrain mesh at a point, and its distance to the nearest visible road (capped at the blend radius).
     pub fn height(&self, x: f64, z: f64) -> (f64, f64) {
-        let p = self.probe(x, z, false);
+        let p = self.probe(x, z, 1.0);
         (p.ground, p.road)
     }
 
     /// Height of the visible ground at a point (over a tunnel, the land above it), and the distance to the nearest visible road.
     pub fn surface(&self, x: f64, z: f64) -> (f64, f64) {
-        let p = self.probe(x, z, false);
+        let p = self.probe(x, z, 1.0);
         (p.surface, p.road)
     }
 
-    pub fn probe(&self, x: f64, z: f64, calm: bool) -> Probe {
+    pub fn probe(&self, x: f64, z: f64, roughness: f64) -> Probe {
         let route = &self.route;
         let (cx, cz) = (cell(x, HASH_CELL), cell(z, HASH_CELL));
         // Per kind of road: inverse-distance weights, weighted elevation, and the nearest sample.
@@ -250,7 +251,7 @@ impl HeightField {
         let [open, bridge, tunnel] = [OPEN, BRIDGE, TUNNEL].map(|k| (best[k as usize].0.sqrt(), best[k as usize].1));
         let level = |k: u8| hsum[k as usize] / wsum[k as usize];
         let road = open.0.min(bridge.0);
-        let mut around = self.around(x, z, calm);
+        let mut around = self.around(x, z, roughness);
         // Land over a tunnel is at least a bore's height above the road, however flat the terrain data is.
         if tunnel.1 != usize::MAX {
             around = around.max(level(TUNNEL) + COVER * (1.0 - smoothstep(30.0, 60.0, tunnel.0)));

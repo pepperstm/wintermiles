@@ -44,7 +44,7 @@ pub struct Waterway {
 
 /// What sort of road, path or railway a mapped line is. In the order they are painted:
 /// where two meet, the later one lies on top.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RoadKind {
     /// An unsurfaced footpath or bridleway.
     Path,
@@ -99,7 +99,7 @@ impl RoadKind {
             RoadKind::Footway => [0.60, 0.59, 0.56],
             RoadKind::Track => [0.53, 0.48, 0.38],
             RoadKind::Pedestrian => [0.64, 0.62, 0.58],
-            RoadKind::Service => [0.33, 0.33, 0.35],
+            RoadKind::Service => [0.29, 0.30, 0.32],
             RoadKind::Minor | RoadKind::Main | RoadKind::Major => [0.24, 0.25, 0.27],
             RoadKind::Tram => [0.38, 0.38, 0.39],
             RoadKind::Rail => [0.45, 0.41, 0.37],
@@ -111,6 +111,9 @@ impl RoadKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Road {
     pub kind: RoadKind,
+    /// One carriageway of a divided road, a slip road, or part of a roundabout.
+    #[serde(default)]
+    pub oneway: bool,
     pub line: Vec<[f64; 2]>,
 }
 
@@ -234,6 +237,41 @@ pub(super) struct RoadStrip {
     pub steel: bool,
     /// Close enough to the route that it may run into it.
     pub joins: bool,
+    /// Traffic runs one way, so there is no line down the middle.
+    pub oneway: bool,
+    /// The white that shows along each edge of a main road. A main road is drawn twice: first
+    /// this, full width, then its tarmac a little narrower on top. Where main roads merge or
+    /// cross, the tarmac of each covers the other's edge, so lines run only round the outside.
+    pub casing: bool,
+    /// Not a length of road but a round patch of its surface centred on `a`, which fills
+    /// the corner where roads meet at an angle.
+    pub cap: bool,
+}
+
+impl RoadStrip {
+    /// Where this comes in the order of painting: lesser ways first; then every main road's
+    /// edge lines before any main road's tarmac; rails last. Within each, corner patches go
+    /// under lengths of road.
+    fn layer(&self) -> (u8, u8, bool, bool) {
+        let rank = self.kind as u8;
+        let main = RoadKind::Main as u8;
+        match (self.kind.marked(), self.casing) {
+            (true, true) => (main, 0, false, !self.cap),
+            (true, false) => (main, 1 + (rank - main), false, !self.cap),
+            _ => (rank, 0, self.steel, !self.cap),
+        }
+    }
+}
+
+/// What `Scene::beside_route` finds: the nearest point of the route's centre line.
+pub(super) struct Kerb {
+    /// Distance from the centre line.
+    pub d: f64,
+    /// The route's elevation there.
+    pub level: f64,
+    pub foot: (f64, f64),
+    /// Unit direction of the route there.
+    pub heading: (f64, f64),
 }
 
 /// A bridge on some other road, clear of the route.
@@ -491,12 +529,47 @@ impl<'a> Beside<'a> {
 
     /// Whether the piece `a→b` of a mapped road runs along the route within `reach` metres: that is, is the route.
     fn same_road(&self, a: (f64, f64), b: (f64, f64), reach: f64) -> bool {
+        self.along(a, b, reach, 0.8)
+    }
+
+    /// As `same_road`, with how nearly parallel it must be given as a cosine.
+    fn along(&self, a: (f64, f64), b: (f64, f64), reach: f64, cos: f64) -> bool {
         let Some(i) = self.nearest(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0), reach) else { return false };
         let r = self.route;
         let (before, after) = (i.saturating_sub(1), (i + 1).min(r.n - 1));
         let (tx, tz) = (r.x[after] - r.x[before], r.z[after] - r.z[before]);
         let (dx, dz) = (b.0 - a.0, b.1 - a.1);
-        (tx * dx + tz * dz).abs() >= 0.8 * tx.hypot(tz) * dx.hypot(dz)
+        (tx * dx + tz * dz).abs() >= cos * tx.hypot(tz) * dx.hypot(dz)
+    }
+
+    /// For each piece of a road (between consecutive `points`): if it is part of a stretch that
+    /// keeps close beside the route for some way — and so may be the road the route is on — the
+    /// route sample it is beside and its distance from it. A road that merely merges with the
+    /// route, or leaves it, is close only briefly.
+    fn shadowed(&self, road: &Chain, points: &[(f64, f64)]) -> Vec<Option<(usize, f64)>> {
+        let n = points.len().max(1) - 1;
+        if road.kind.is_rail() {
+            return vec![None; n];
+        }
+        let reach = if road.oneway { SAME_ONEWAY_M } else if matches!(road.kind, RoadKind::Path | RoadKind::Footway) { SAME_PATH_M } else { SAME_ROAD_M };
+        let mut found: Vec<Option<(usize, f64)>> = (0..n)
+            .map(|k| {
+                let (a, b) = (points[k], points[k + 1]);
+                let middle = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+                let i = self.nearest(middle, reach).filter(|_| self.along(a, b, reach, SAME_COS))?;
+                Some((i, (self.route.x[i] - middle.0).hypot(self.route.z[i] - middle.1)))
+            })
+            .collect();
+        let length = |k: usize| (points[k + 1].0 - points[k].0).hypot(points[k + 1].1 - points[k].1);
+        let mut k = 0;
+        while k < n {
+            let run = (k..n).take_while(|&j| found[j].is_some()).count();
+            if run > 0 && (k..k + run).map(length).sum::<f64>() < SAME_FOR_M {
+                found[k..k + run].fill(None);
+            }
+            k += run.max(1);
+        }
+        found
     }
 
     /// Whether the piece `a→b` (no longer than a cell) cuts across the route.
@@ -511,13 +584,177 @@ impl<'a> Beside<'a> {
     }
 }
 
-/// How close a mapped road must run to the route to be taken for the route itself. Footways
-/// get less: a cycle path really does run alongside the carriageway.
+/// The ground's fine roughness is smoothed away under a road and comes back over this distance beyond its edge.
+pub(super) const CALM_FROM: f64 = 3.0;
+pub(super) const CALM_TO: f64 = 14.0;
+/// Ends of mapped ways this close together are the same junction.
+const NODE: f64 = 0.4;
+
+fn node(p: (f64, f64)) -> (i64, i64) {
+    ((p.0 / NODE).round() as i64, (p.1 / NODE).round() as i64)
+}
+
+/// A run of mapped ways joined end to end.
+struct Chain {
+    kind: RoadKind,
+    oneway: bool,
+    line: Vec<(f64, f64)>,
+    /// Comes back to where it started: a roundabout, or a loop of road.
+    closed: bool,
+}
+
+impl Chain {
+    /// The line with points no more than twenty metres apart, and no two in the same place.
+    fn points(&self) -> Vec<(f64, f64)> {
+        let mut points = resample(&self.line, 20.0);
+        points.dedup_by(|a, b| (a.0 - b.0).hypot(a.1 - b.1) < 1e-6);
+        points
+    }
+}
+
+/// Joins ways that carry on from one another — the map splits a road wherever anything about it
+/// changes or another road meets it, and the tiles cut it again at their borders — so that each
+/// bend and each stretch of painted line can be drawn in one piece. At a junction the road that
+/// goes most nearly straight on is the one that continues; a roundabout comes out as one ring.
+/// Also returns the ends that are left at junctions, where a corner will want filling.
+fn chains(ways: Vec<(RoadKind, bool, Vec<(f64, f64)>)>) -> (Vec<Chain>, Vec<((f64, f64), RoadKind)>) {
+    type End = (usize, bool);
+    let tip = |(w, tail): End| if tail { ways[w].2[ways[w].2.len() - 1] } else { ways[w].2[0] };
+    // Unit direction in which the way leaves its end.
+    let leaving = |(w, tail): End| {
+        let line = &ways[w].2;
+        let (a, b) = if tail { (line[line.len() - 1], line[line.len() - 2]) } else { (line[0], line[1]) };
+        let len = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
+        ((b.0 - a.0) / len, (b.1 - a.1) / len)
+    };
+    let mut ends: HashMap<(i64, i64), Vec<End>> = HashMap::new();
+    for w in 0..ways.len() {
+        for end in [(w, false), (w, true)] {
+            ends.entry(node(tip(end))).or_default().push(end);
+        }
+    }
+    // Pair off the ends at each junction, straightest first.
+    let mut onward: HashMap<End, End> = HashMap::new();
+    let mut loose = Vec::new();
+    for at in ends.values() {
+        let mut pairs: Vec<(f64, End, End)> = Vec::new();
+        for (k, &a) in at.iter().enumerate() {
+            for &b in &at[k + 1..] {
+                let (u, v) = (leaving(a), leaving(b));
+                let turn = u.0 * v.0 + u.1 * v.1;
+                // Two ends alone carry on whatever the angle; among more, only one that goes roughly straight on.
+                if ways[a.0].0 == ways[b.0].0 && ways[a.0].1 == ways[b.0].1 && (at.len() == 2 || turn < -0.75) {
+                    pairs.push((turn, a, b));
+                }
+            }
+        }
+        pairs.sort_by(|x, y| x.0.total_cmp(&y.0));
+        for (_, a, b) in pairs {
+            if !onward.contains_key(&a) && !onward.contains_key(&b) {
+                onward.insert(a, b);
+                onward.insert(b, a);
+            }
+        }
+        if at.len() >= 2 {
+            loose.extend(at.iter().filter(|e| !onward.contains_key(e)).map(|&e| (tip(e), ways[e.0].0)));
+        }
+    }
+    let mut used = vec![false; ways.len()];
+    let mut out = Vec::new();
+    for start in 0..ways.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let mut line = ways[start].2.clone();
+        let mut closed = false;
+        // Grow from the tail, then turn round and grow from what was the head.
+        for pass in 0..2 {
+            let mut end: End = (start, pass == 0);
+            while let Some(&(next, next_tail)) = onward.get(&end) {
+                if next == start {
+                    closed = true;
+                    break;
+                }
+                if used[next] {
+                    break;
+                }
+                used[next] = true;
+                let mut more = ways[next].2.clone();
+                if next_tail {
+                    more.reverse();
+                }
+                line.extend(more.into_iter().skip(1));
+                end = (next, !next_tail);
+            }
+            if closed {
+                break;
+            }
+            line.reverse();
+        }
+        let length: f64 = line.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum();
+        // A small ring is a roundabout, whatever the map says about which way traffic goes round it.
+        let oneway = ways[start].1 || (closed && length < ROUNDABOUT_M);
+        out.push(Chain { kind: ways[start].0, oneway, line: rounded(&line, closed), closed });
+    }
+    (out, loose)
+}
+
+/// Rounds the corners of a mapped line a little (two rounds of corner-cutting, never taking more
+/// than a few metres off a corner), so that a bend drawn with a handful of points becomes a curve.
+fn rounded(line: &[(f64, f64)], closed: bool) -> Vec<(f64, f64)> {
+    let mut line = line.to_vec();
+    for _ in 0..2 {
+        let n = line.len();
+        if n < 3 {
+            break;
+        }
+        let mut out = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let (before, after) = if closed { (Some(if i == 0 { n - 2 } else { i - 1 }), Some(if i + 1 == n { 1 } else { i + 1 })) } else { (i.checked_sub(1), (i + 1 < n).then_some(i + 1)) };
+            let (Some(a), Some(c)) = (before, after) else {
+                out.push(line[i]);
+                continue;
+            };
+            let (p, q, r) = (line[a], line[i], line[c]);
+            let (la, lc) = ((p.0 - q.0).hypot(p.1 - q.1), (r.0 - q.0).hypot(r.1 - q.1));
+            let straight = ((q.0 - p.0) * (r.0 - q.0) + (q.1 - p.1) * (r.1 - q.1)) / (la * lc).max(1e-9);
+            // Leave alone what is already straight, and corners that are meant: a turn at a junction.
+            if !(0.3..0.996).contains(&straight) || la < 0.5 || lc < 0.5 {
+                out.push(q);
+                continue;
+            }
+            let (ta, tc) = ((CORNER_M / la).min(0.25), (CORNER_M / lc).min(0.25));
+            out.push((q.0 + (p.0 - q.0) * ta, q.1 + (p.1 - q.1) * ta));
+            out.push((q.0 + (r.0 - q.0) * tc, q.1 + (r.1 - q.1) * tc));
+        }
+        // A ring still starts and ends at one point.
+        if closed {
+            let n = out.len();
+            out[n - 1] = out[0];
+        }
+        line = out;
+    }
+    line
+}
+
+/// A mapped road that stays this close to the route (footways get less room — a cycle path really
+/// does run alongside the carriageway — and one-way roads least: one close beside the route is
+/// the other carriageway), this nearly parallel (as a cosine), for this far, is the road the
+/// route is on. The distance allows for a recorded track that wanders.
 const SAME_ROAD_M: f64 = 6.0;
 const SAME_PATH_M: f64 = 3.5;
+const SAME_ONEWAY_M: f64 = 2.5;
+const SAME_COS: f64 = 0.94;
+const SAME_FOR_M: f64 = 40.0;
+/// A ring of road no longer than this is a roundabout.
+const ROUNDABOUT_M: f64 = 450.0;
+const CORNER_M: f64 = 4.0;
 /// Gauge of a railway, and the width its rails are drawn (generously, so they show).
 const GAUGE: f64 = 1.435;
 const RAIL_HEAD: f64 = 0.16;
+/// Width of the line painted along each edge of a main road.
+const EDGE_LINE: f64 = 0.18;
 
 impl Scene {
     pub fn new(route: &Route, scenery: &Scenery) -> Self {
@@ -580,9 +817,26 @@ impl Scene {
 
         // The rest of the road network. The route's own road is in the map too, and is left out.
         let beside = Beside::new(route);
-        for road in &scenery.roads {
-            if scene.add_road(&beside, &local(&road.line), road.kind) {
-                scene.counts.roads += 1;
+        let ways: Vec<_> = scenery.roads.iter().filter(|r| r.line.len() >= 2).map(|r| (r.kind, r.oneway, local(&r.line))).collect();
+        let (roads, loose) = chains(ways);
+        scene.counts.roads = roads.len();
+        // Of the mapped roads that run close beside the route, only the nearest at each place is the route's own.
+        let mut nearest_road = vec![f64::INFINITY; route.n];
+        for road in &roads {
+            for (i, d) in beside.shadowed(road, &road.points()).into_iter().flatten() {
+                for claim in &mut nearest_road[i.saturating_sub(3)..(i + 4).min(route.n)] {
+                    *claim = claim.min(d);
+                }
+            }
+        }
+        for road in &roads {
+            scene.add_road(&beside, road, &nearest_road);
+        }
+        // Where several ways meet, each ends square at the junction; a round patch fills the corners between them.
+        let mut capped: HashSet<((i64, i64), RoadKind)> = HashSet::new();
+        for (tip, kind) in loose {
+            if !kind.is_rail() && capped.insert((node(tip), kind)) {
+                scene.add_cap(&beside, tip, kind);
             }
         }
         for (bridge, line) in spare {
@@ -597,10 +851,10 @@ impl Scene {
         }
         scene.counts.road_bridges = scene.decks.len();
         scene.route_cells = beside.cells;
-        // Painting order within each chunk: lesser ways first, rails last.
+        // Painting order within each chunk: lesser ways first, rails last, and each sort's corner patches under its lengths of road.
         let strips = &scene.road_strips;
         for list in scene.road_index.values_mut() {
-            list.sort_by_key(|&k| (strips[k as usize].kind, strips[k as usize].steel));
+            list.sort_by_key(|&k| strips[k as usize].layer());
         }
 
         for (kind, _, _) in runs(&scene.kinds) {
@@ -632,75 +886,118 @@ impl Scene {
         }
     }
 
-    /// Lays out one mapped road as strips. Returns false if nothing of it is drawn.
-    fn add_road(&mut self, beside: &Beside, line: &[(f64, f64)], kind: RoadKind) -> bool {
-        let points = resample(line, 20.0);
+    /// Lays out one road as strips.
+    fn add_road(&mut self, beside: &Beside, road: &Chain, nearest_road: &[f64]) {
+        let kind = road.kind;
+        let points = road.points();
         if points.len() < 2 {
-            return false;
+            return;
         }
-        let reach = if matches!(kind, RoadKind::Path | RoadKind::Footway) { SAME_PATH_M } else { SAME_ROAD_M };
+        let n = points.len();
+        // On a loop the last point is the first again.
+        let closed = road.closed && n > 3;
+        let unit = |a: (f64, f64), b: (f64, f64)| {
+            let len = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
+            ((b.0 - a.0) / len, (b.1 - a.1) / len)
+        };
+        // Direction of travel into and out of each point.
+        let headings = |i: usize| {
+            let before = if i > 0 { Some(i - 1) } else if closed { Some(n - 2) } else { None };
+            let after = if i + 1 < n { Some(i + 1) } else if closed { Some(1) } else { None };
+            let (u, v) = (before.map(|k| unit(points[k], points[i])), after.map(|k| unit(points[i], points[k])));
+            (u.or(v).unwrap(), v.or(u).unwrap())
+        };
         // Sideways at each point, lengthened at bends so the road keeps its width through them.
         let side = |i: usize| {
-            let (p, q, r) = (points[i.saturating_sub(1)], points[i], points[(i + 1).min(points.len() - 1)]);
-            let unit = |a: (f64, f64), b: (f64, f64)| {
-                let len = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
-                ((b.0 - a.0) / len, (b.1 - a.1) / len)
-            };
-            let (u, v) = (if i == 0 { unit(q, r) } else { unit(p, q) }, if i + 1 == points.len() { unit(p, q) } else { unit(q, r) });
+            let (u, v) = headings(i);
             let (tx, tz) = (u.0 + v.0, u.1 + v.1);
             let len = tx.hypot(tz).max(1e-9);
             let mitre = (2.0 / len).min(1.5);
             (tz / len * mitre, -tx / len * mitre)
         };
-        // The bed, and for a railway the two rails on it.
-        let mut ribbons = vec![(0.0, kind.width() / 2.0, false)];
-        if kind.is_rail() {
-            ribbons.extend([(-GAUGE / 2.0, RAIL_HEAD / 2.0, true), (GAUGE / 2.0, RAIL_HEAD / 2.0, true)]);
+        // The surface; under a main road's, its edge lines; on a railway's, the two rails.
+        let mut ribbons = vec![(0.0, kind.width() / 2.0, false, false)];
+        if kind.marked() {
+            ribbons = vec![(0.0, kind.width() / 2.0, false, true), (0.0, kind.width() / 2.0 - EDGE_LINE, false, false)];
         }
-        let (mut along, mut drawn) = (0.0, false);
-        for i in 0..points.len() - 1 {
+        if kind.is_rail() {
+            ribbons.extend([(-GAUGE / 2.0, RAIL_HEAD / 2.0, true, false), (GAUGE / 2.0, RAIL_HEAD / 2.0, true, false)]);
+        }
+        // The stretches that are the road the route is on are drawn already.
+        let same: Vec<bool> = beside.shadowed(road, &points).into_iter().map(|claim| claim.is_some_and(|(i, d)| d <= nearest_road[i] + 1.0)).collect();
+        let length = |i: usize| (points[i + 1].0 - points[i].0).hypot(points[i + 1].1 - points[i].1);
+        let mut along = 0.0;
+        for i in 0..n - 1 {
             let (a, b) = (points[i], points[i + 1]);
-            let len = (b.0 - a.0).hypot(b.1 - a.1);
+            let len = length(i);
             let ends = (along, along + len);
             along += len;
-            if len < 1e-6 || (!kind.is_rail() && beside.same_road(a, b, reach)) {
+            if same[i] {
                 continue;
             }
             let (na, nb) = (side(i), side(i + 1));
-            for &(offset, half, steel) in &ribbons {
+            for &(offset, half, steel, casing) in &ribbons {
                 let at = |p: (f64, f64), n: (f64, f64), s: f64| (p.0 + n.0 * (offset + half * s), p.1 + n.1 * (offset + half * s));
                 let corners = [at(a, na, -1.0), at(a, na, 1.0), at(b, nb, 1.0), at(b, nb, -1.0)];
-                let index = self.road_strips.len() as u32;
-                let joins = !kind.is_rail() && resample(&[a, b], 10.0).iter().any(|&p| beside.nearest(p, Beside::CELL).is_some());
-                self.road_strips.push(RoadStrip { a, b, corners, along: ends, half: offset.abs() + half, kind, steel, joins });
-                let chunk = |v: f64| (v / CHUNK).floor() as i32;
-                let (xs, zs) = (corners.map(|c| chunk(c.0)), corners.map(|c| chunk(c.1)));
-                for cx in *xs.iter().min().unwrap()..=*xs.iter().max().unwrap() {
-                    for cz in *zs.iter().min().unwrap()..=*zs.iter().max().unwrap() {
-                        self.road_index.entry((cx, cz)).or_default().push(index);
-                    }
-                }
+                self.add_strip(beside, RoadStrip { a, b, corners, along: ends, half: offset.abs() + half, kind, steel, joins: false, oneway: road.oneway, casing, cap: false });
             }
-            drawn = true;
+            // A bend too sharp to mitre is rounded off with a patch.
+            let (u, v) = headings(i);
+            if !kind.is_rail() && u.0 * v.0 + u.1 * v.1 < 0.3 {
+                self.add_cap(beside, a, kind);
+            }
         }
-        drawn
     }
 
-    /// For a point on another road: how far it is from the centre line of the route where the
-    /// route runs on the ground, and the route's elevation there. `None` if the route isn't near.
-    pub(super) fn beside_route(&self, route: &Route, p: (f64, f64)) -> Option<(f64, f64)> {
+    /// A round patch of a road's surface (and of its edge line, if it has one).
+    fn add_cap(&mut self, beside: &Beside, at: (f64, f64), kind: RoadKind) {
+        let half = kind.width() / 2.0;
+        let cap = |half: f64, casing: bool| RoadStrip { a: at, b: at, corners: [at; 4], along: (0.0, 0.0), half, kind, steel: false, joins: false, oneway: true, casing, cap: true };
+        if kind.marked() {
+            self.add_strip(beside, cap(half, true));
+            self.add_strip(beside, cap(half - EDGE_LINE, false));
+        } else {
+            self.add_strip(beside, cap(half, false));
+        }
+    }
+
+    /// Files a strip under every chunk it can affect: those it lies in, and those whose ground it smooths.
+    fn add_strip(&mut self, beside: &Beside, mut strip: RoadStrip) {
+        let reach = if strip.cap { strip.half } else { 0.0 };
+        strip.joins = !strip.kind.is_rail() && resample(&[strip.a, strip.b], 10.0).iter().any(|&p| beside.nearest(p, Beside::CELL).is_some());
+        let margin = reach + CALM_TO + 2.0 * CELL;
+        let chunk = |v: f64| (v / CHUNK).floor() as i32;
+        let span = |c: usize| {
+            let values = strip.corners.map(|p| if c == 0 { p.0 } else { p.1 });
+            (chunk(values.iter().cloned().fold(f64::MAX, f64::min) - margin), chunk(values.iter().cloned().fold(f64::MIN, f64::max) + margin))
+        };
+        let (xs, zs) = (span(0), span(1));
+        let index = self.road_strips.len() as u32;
+        for cx in xs.0..=xs.1 {
+            for cz in zs.0..=zs.1 {
+                self.road_index.entry((cx, cz)).or_default().push(index);
+            }
+        }
+        self.road_strips.push(strip);
+    }
+
+    /// For a point on another road: the nearest point of the route's centre line, where the
+    /// route runs on the ground. `None` if the route isn't near.
+    pub(super) fn beside_route(&self, route: &Route, p: (f64, f64)) -> Option<Kerb> {
         let i = Beside { route, cells: HashMap::new() }.nearest_in(&self.route_cells, p, Beside::CELL)?;
         if self.kinds[i] != OPEN {
             return None;
         }
-        let mut best: Option<(f64, f64)> = None;
+        let mut best: Option<Kerb> = None;
         for k in i.saturating_sub(1)..(i + 1).min(route.n - 1) {
             let (a, b) = ((route.x[k], route.z[k]), (route.x[k + 1], route.z[k + 1]));
             let (dx, dz) = (b.0 - a.0, b.1 - a.1);
-            let t = (((p.0 - a.0) * dx + (p.1 - a.1) * dz) / (dx * dx + dz * dz).max(1e-12)).clamp(0.0, 1.0);
-            let d = (p.0 - a.0 - dx * t).hypot(p.1 - a.1 - dz * t);
-            if best.is_none_or(|b| d < b.0) {
-                best = Some((d, route.ele[k] as f64 + (route.ele[k + 1] as f64 - route.ele[k] as f64) * t));
+            let len = dx.hypot(dz).max(1e-9);
+            let t = (((p.0 - a.0) * dx + (p.1 - a.1) * dz) / (len * len)).clamp(0.0, 1.0);
+            let foot = (a.0 + dx * t, a.1 + dz * t);
+            let d = (p.0 - foot.0).hypot(p.1 - foot.1);
+            if best.as_ref().is_none_or(|b| d < b.d) {
+                best = Some(Kerb { d, level: route.ele[k] as f64 + (route.ele[k + 1] as f64 - route.ele[k] as f64) * t, foot, heading: (dx / len, dz / len) });
             }
         }
         best

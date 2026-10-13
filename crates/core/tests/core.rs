@@ -802,6 +802,19 @@ mod scenery {
         Crossing { tunnel, kind: if rail { RoadKind::Rail } else { RoadKind::Minor }, line: geo(route, points) }
     }
 
+    /// A roundabout as the map has it: a ring of main road, twenty metres in radius and 300 m east of
+    /// the route at 1500 m, in four separate ways, with a lane leading off from each place they meet.
+    fn roundabout(route: &Route) -> Vec<Road> {
+        let on_ring = |turn: f64, r: f64| (300.0 + r * turn.to_radians().cos(), 1500.0 + r * turn.to_radians().sin());
+        (0..4)
+            .flat_map(|q| {
+                let from = q as f64 * 90.0;
+                let arc: Vec<(f64, f64)> = (0..=6).map(|k| on_ring(from + k as f64 * 15.0, 20.0)).collect();
+                [Road { kind: RoadKind::Main, oneway: false, line: geo(route, &arc) }, Road { kind: RoadKind::Minor, oneway: false, line: geo(route, &[on_ring(from, 20.0), on_ring(from, 80.0)]) }]
+            })
+            .collect()
+    }
+
     /// 3 km of level road with: a bridge at 500–600 m, a long tunnel at 1000–1400 m, a short one at
     /// 1800–1830 m, a road crossing overhead at 2200 m and a railway bridge alongside at 2500–2600 m;
     /// a wood to the east and a lake to the west near the start, and a stream beyond the lake.
@@ -830,12 +843,15 @@ mod scenery {
             roads: vec![
                 // The road the route itself follows, as mapped; a main road across it at 700 m;
                 // a lane through the wood; a railway beside the lake; and the road to that far bridge.
-                Road { kind: RoadKind::Minor, line: geo(&route, &[(2.0, 0.0), (2.0, 480.0)]) },
-                Road { kind: RoadKind::Main, line: geo(&route, &[(-400.0, 660.0), (0.0, 700.0), (400.0, 740.0)]) },
-                Road { kind: RoadKind::Track, line: geo(&route, &[(40.0, 200.0), (200.0, 200.0)]) },
-                Road { kind: RoadKind::Rail, line: geo(&route, &[(-260.0, 100.0), (-260.0, 600.0)]) },
-                Road { kind: RoadKind::Minor, line: geo(&route, &[(100.0, 2700.0), (300.0, 2700.0)]) },
-            ],
+                Road { kind: RoadKind::Minor, oneway: false, line: geo(&route, &[(2.0, 0.0), (2.0, 480.0)]) },
+                Road { kind: RoadKind::Main, oneway: false, line: geo(&route, &[(-400.0, 660.0), (0.0, 700.0), (400.0, 740.0)]) },
+                Road { kind: RoadKind::Track, oneway: false, line: geo(&route, &[(40.0, 200.0), (200.0, 200.0)]) },
+                Road { kind: RoadKind::Rail, oneway: false, line: geo(&route, &[(-260.0, 100.0), (-260.0, 600.0)]) },
+                Road { kind: RoadKind::Minor, oneway: false, line: geo(&route, &[(100.0, 2700.0), (300.0, 2700.0)]) },
+            ]
+            .into_iter()
+            .chain(roundabout(&route))
+            .collect(),
         };
         let dem = level_ground(&route, 100.0);
         let world = World::with_map(route.clone(), Some(dem), 0.0, Some(&scenery), &[]);
@@ -872,14 +888,14 @@ mod scenery {
         // Open road: ground at road level beside it.
         assert!(close(f.height(5.0, z(300.0)).0, 99.65, 0.1));
         // Under the middle of the bridge the ground has dropped away, and the deck is still "the road" to anything nearby.
-        let under = f.probe(0.0, z(550.0), false);
+        let under = f.probe(0.0, z(550.0), 1.0);
         assert!(under.ground < 96.0 && under.road < 3.0, "{} {}", under.ground, under.road);
         assert!(under.open > 40.0);
         // In the tunnel the mesh is a trench under the road, and the land you would stand on is above the bore.
-        let inside = f.probe(0.0, z(1200.0), false);
+        let inside = f.probe(0.0, z(1200.0), 1.0);
         assert!(inside.trench && inside.ground < 99.0 && inside.surface > 106.5, "{} {}", inside.ground, inside.surface);
         // The trench is no wider than it needs to be: thirty metres out the mesh is back at the surface.
-        let beside = f.probe(30.0, z(1200.0), false);
+        let beside = f.probe(30.0, z(1200.0), 1.0);
         assert!(!beside.trench && close(beside.ground, beside.surface, 1e-9) && beside.surface > 106.0);
         // Nothing overhead is "the road" for the purposes of keeping trees and houses off it.
         assert!(f.surface(0.0, z(1200.0)).1 > 80.0);
@@ -932,8 +948,8 @@ mod scenery {
     fn lays_the_other_roads_on_the_ground() {
         let (_, world) = world();
         let c = world.scene.counts;
-        // The mapped copy of the route's own road is not drawn a second time.
-        assert_eq!((c.roads, c.road_bridges), (4, 1));
+        // The four quarters of the roundabout count as one road.
+        assert_eq!((c.roads, c.road_bridges), (10, 1));
         let vertices = |m: &GridMesh| m.roads.positions.chunks(3).map(|v| [v[0] as f64, v[1] as f64, v[2] as f64]).collect::<Vec<_>>();
         // The main road crosses at 700 m (z 800): chunk row 3 holds z 720–960.
         let (west, east) = (world.chunk(-1, 3), world.chunk(0, 3));
@@ -955,15 +971,40 @@ mod scenery {
                 let (u, w) = ([t[1][0] - t[0][0], t[1][2] - t[0][2]], [t[2][0] - t[0][0], t[2][2] - t[0][2]]);
                 assert!(u[1] * w[0] - u[0] * w[1] > 0.0, "triangle faces down: {t:?}");
                 assert!(r.normals[k * 9 + 1] > 0.5);
-                // A main road has lines on it: its texture coordinates span the marked part of the texture.
-                assert!(r.uvs[k * 6..k * 6 + 6].chunks(2).all(|uv| (0.0..=0.376).contains(&uv[0])));
             }
+            // A main road is painted twice: white, full width, for its edge lines; then tarmac a little
+            // narrower on top, whose texture coordinates span the part of the texture with the centre line.
+            let paint: Vec<bool> = (0..r.vertices() / 3).map(|k| r.colors[k * 9] > 0.7 && r.uvs[k * 6] > 0.8).collect();
+            let first_tarmac = paint.iter().position(|p| !p).expect("tarmac");
+            assert!(first_tarmac > 0 && paint[first_tarmac..].iter().all(|p| !p));
+            assert!(r.uvs[first_tarmac * 6..].chunks(2).all(|uv| (0.0..=0.376).contains(&uv[0])));
             // Seven and a half metres wide, all the way across the chunk.
             let across = vertices(mesh).iter().filter(|v| (v[0] - (cx * CHUNK + 100.0)).abs() < 20.0).map(|v| v[2]).fold((f64::MAX, f64::MIN), |(lo, hi), z| (lo.min(z), hi.max(z)));
             assert!(across.1 - across.0 > 7.5 && across.1 - across.0 < 13.0, "{across:?}");
             assert!(vertices(mesh).iter().any(|v| v[0] < cx * CHUNK + 10.0) && vertices(mesh).iter().any(|v| v[0] > if cx < 0.0 { -10.0 } else { 230.0 }));
             // It meets the route's tarmac (at 100.07) at its edge.
             assert!(vertices(mesh).iter().any(|v| v[0].abs() < 3.5 && v[1] > 100.07));
+        }
+        // The roundabout is one ring: no centre line (traffic goes one way round it), an unbroken edge
+        // line inside and out, and nothing in the island in the middle.
+        for cz in [-1, 0] {
+            let mesh = world.chunk(1, cz);
+            let r = &mesh.roads;
+            let (mut tarmac, mut paint) = (0, 0);
+            for (k, t) in vertices(&mesh).chunks(3).enumerate() {
+                let from_centre = t.iter().map(|v| (v[0] - 300.0).hypot(v[2] - z(1500.0))).fold(0.0, f64::max);
+                if from_centre > 24.5 {
+                    continue;
+                }
+                assert!(t.iter().all(|v| (v[0] - 300.0).hypot(v[2] - z(1500.0)) > 15.5), "road in the island: {t:?}");
+                if r.uvs[k * 6] < 0.5 {
+                    tarmac += 1;
+                    assert!(r.uvs[k * 6..k * 6 + 6].chunks(2).all(|uv| uv[1] == 0.3), "a centre line on the roundabout");
+                } else if r.colors[k * 9] > 0.7 {
+                    paint += 1;
+                }
+            }
+            assert!(tarmac > 50 && paint > 50, "{tarmac} {paint}");
         }
         // Nothing of the route's own road in the chunks it runs through; only the track in the wood.
         let woods = world.chunk(0, 5);

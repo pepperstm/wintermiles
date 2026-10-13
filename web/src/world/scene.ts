@@ -27,7 +27,9 @@ const ZENITH = 0x3f86d6
 const CAMERAS = [
   { back: 7.5, up: 3.0, side: 0, lookAhead: 9, lookUp: 1.3 },
   { back: 24, up: 13, side: 0, lookAhead: 6, lookUp: 1 },
-  { back: -1.5, up: 2.0, side: 9, lookAhead: 0, lookUp: 1.1 }
+  { back: -1.5, up: 2.0, side: 9, lookAhead: 0, lookUp: 1.1 },
+  // From high above, for seeing where you are in the map.
+  { back: 38, up: 62, side: 0, lookAhead: 22, lookUp: 0 }
 ]
 
 function textSprite(text: string, background: string, color = '#ffffff'): THREE.Sprite {

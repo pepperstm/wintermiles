@@ -190,13 +190,27 @@ impl World {
         // Where water stands (0 to 1: it shallows to nothing against a road), and the level of its surface.
         let mut lake = vec![0.0f64; pad * pad];
         let mut level = vec![f64::INFINITY; pad * pad];
+        // Under a road the ground loses its fine unevenness, or the road would ripple with it.
+        let mut roughness = vec![1.0f64; pad * pad];
+        for strip in scene.roads_in(cx, cz) {
+            let reach = strip.half + scenery::CALM_TO;
+            let span = |a: f64, b: f64, origin: f64| ((((a.min(b) - reach - origin) / cell).ceil() + m as f64).max(0.0) as usize, ((((a.max(b) + reach - origin) / cell).floor() + m as f64 + 1.0).max(0.0) as usize).min(pad));
+            let ((i0, i1), (j0, j1)) = (span(strip.a.0, strip.b.0, x0), span(strip.a.1, strip.b.1, z0));
+            for j in j0..j1 {
+                for i in i0..i1 {
+                    let d = scenery::to_segment((x0 + (i as f64 - m as f64) * cell, z0 + (j as f64 - m as f64) * cell), strip.a, strip.b);
+                    let k = j * pad + i;
+                    roughness[k] = roughness[k].min(smoothstep(strip.half + scenery::CALM_FROM, reach, d));
+                }
+            }
+        }
         for j in 0..pad {
             for i in 0..pad {
                 let (li, lj) = (li0 + i as i32, lj0 + j as i32);
                 let mapped_water = watery && scene.water.get(li, lj);
                 // The fine roughness of the ground is left out at the water's edge, or the shoreline would wander with it.
                 let shore = watery && (mapped_water || (-1..=1).any(|di| (-1..=1).any(|dj| scene.water.get(li + di, lj + dj))));
-                let p = self.field.probe(x0 + (i as f64 - m as f64) * cell, z0 + (j as f64 - m as f64) * cell, shore);
+                let p = self.field.probe(x0 + (i as f64 - m as f64) * cell, z0 + (j as f64 - m as f64) * cell, if shore { 0.0 } else { roughness[j * pad + i] });
                 let k = j * pad + i;
                 h[k] = p.ground;
                 near[k] = p.road;

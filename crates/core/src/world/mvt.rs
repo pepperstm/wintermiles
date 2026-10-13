@@ -392,10 +392,11 @@ pub fn parse_tile(bytes: &[u8], zoom: u32, tx: u32, ty: u32) -> Option<MapTile> 
                 ("streets", LINE) => {
                     let Some(kind) = road_kind(layer.text(f, "kind"), layer.flag(f, "link"), layer.flag(f, "rail")) else { continue };
                     let (bridge, tunnel) = (layer.flag(f, "bridge"), layer.flag(f, "tunnel"));
+                    let oneway = layer.flag(f, "oneway") || layer.flag(f, "oneway_reverse");
                     for path in rings(f.geometry)? {
                         for piece in clip(&path, extent) {
                             match (bridge, tunnel) {
-                                (false, false) => found.roads.push(Road { kind, line: simplify(&piece, 0.35 / unit_m).into_iter().map(to_lat_lon).collect() }),
+                                (false, false) => found.roads.push(Road { kind, oneway, line: simplify(&piece, 0.15 / unit_m).into_iter().map(to_lat_lon).collect() }),
                                 // A covered bridge is as good as out of sight.
                                 (true, true) => {}
                                 _ => found.crossings.push(Crossing { tunnel, kind, line: piece.into_iter().map(to_lat_lon).collect() }),

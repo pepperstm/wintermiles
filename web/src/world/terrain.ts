@@ -53,8 +53,8 @@ function windowTexture(): THREE.CanvasTexture {
 
 /**
  * Surface of the roads around the route. The left three-eighths is tarmac with
- * an edge line each side and a broken centre line, for main roads; the rest is
- * blank, for everything whose colour comes from its vertices alone.
+ * a broken centre line, for main roads (their edge lines are geometry); the rest
+ * is blank, for everything whose colour comes from its vertices alone.
  */
 function waysTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
@@ -67,8 +67,6 @@ function waysTexture(): THREE.CanvasTexture {
   ctx.fillStyle = '#3d3f45'
   ctx.fillRect(0, 0, 80, 64)
   ctx.fillStyle = '#e8e8e2'
-  ctx.fillRect(1, 0, 2, 64)
-  ctx.fillRect(45, 0, 2, 64)
   ctx.fillRect(23, 0, 2, 22)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
