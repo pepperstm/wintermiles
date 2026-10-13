@@ -1,0 +1,5 @@
+# Lets non-root users open Garmin/Dynastream ANT+ USB sticks.
+# Install: sudo cp 99-ant-usb.rules /etc/udev/rules.d/ && sudo udevadm control --reload && replug the stick
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fcf", ATTRS{idProduct}=="1004", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fcf", ATTRS{idProduct}=="1008", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fcf", ATTRS{idProduct}=="1009", MODE="0666"

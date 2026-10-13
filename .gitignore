@@ -1,0 +1,5 @@
+node_modules
+target
+dist-web
+*.log
+.DS_Store

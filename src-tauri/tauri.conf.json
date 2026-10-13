@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WinterMiles",
+  "version": "0.2.0",
+  "identifier": "org.wintermiles.WinterMiles",
+  "build": {
+    "frontendDist": "../dist-web",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev:web",
+    "beforeBuildCommand": "npm run build:web"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "WinterMiles",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 1000,
+        "minHeight": 640,
+        "backgroundColor": "#0e1116",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "HealthcareAndFitness",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "linux": {
+      "deb": {
+        "files": { "/usr/lib/udev/rules.d/99-wintermiles-ant.rules": "../resources/99-ant-usb.rules" }
+      }
+    }
+  }
+}

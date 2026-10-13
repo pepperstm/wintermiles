@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "src-tauri"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
+
+# Terrain meshing and the ride simulation are hot loops; keep them fast in dev builds too.
+[profile.dev.package.wintermiles-core]
+opt-level = 2
