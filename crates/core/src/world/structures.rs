@@ -4,7 +4,7 @@
 
 use super::height::{smoothstep, BLEND, BRIDGE, TUNNEL};
 use super::mesh::TriMesh;
-use super::scenery::{runs, Overbridge};
+use super::scenery::{runs, Deck, Overbridge};
 use super::{World, DECK_DEPTH, ROAD_LIFT, ROAD_WIDTH};
 
 /// One mesh for the whole route, like the road.
@@ -69,6 +69,9 @@ impl World {
         }
         for over in &self.scene.overbridges {
             self.overbridge(&mut out.lit, over);
+        }
+        for deck in &self.scene.decks {
+            self.deck(&mut out.lit, deck);
         }
         out
     }
@@ -195,6 +198,55 @@ impl World {
                 let arch = (4..8).contains(&k);
                 let (a, b) = (foot(k, arch), foot(k + 1, arch));
                 out.lit.quad([a, b, top_b, top_a], facing, [colour; 4]);
+            }
+        }
+    }
+
+    /// A bridge on another road: a deck from bank to bank, wherever the ground between falls away.
+    fn deck(&self, mesh: &mut TriMesh, deck: &Deck) {
+        let line = &deck.line;
+        let half = deck.kind.width() / 2.0 + if deck.kind.width() < 3.0 { 0.2 } else { 0.7 };
+        // A footbridge is a slimmer thing than a road bridge.
+        let (slab, parapet) = if deck.kind.width() < 3.0 { (0.35, 1.1) } else { (0.9, 0.9) };
+        let (surface, concrete, dark) = (rgb(deck.kind.colour()), rgb(CONCRETE), rgb(CONCRETE_DARK));
+        let ground = |p: (f64, f64)| self.field.surface(p.0, p.1).0;
+        // Level with the banks at each end and straight between, but never under the ground.
+        let lengths: Vec<f64> = std::iter::once(0.0)
+            .chain(line.windows(2).scan(0.0, |sum, w| {
+                *sum += (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+                Some(*sum)
+            }))
+            .collect();
+        let total = lengths[line.len() - 1].max(1e-9);
+        let (first, last) = (ground(line[0]), ground(line[line.len() - 1]));
+        let top: Vec<f64> = (0..line.len()).map(|i| (first + (last - first) * lengths[i] / total).max(ground(line[i])) + 0.25).collect();
+        let side = |i: usize| {
+            let (a, b) = (line[i.saturating_sub(1)], line[(i + 1).min(line.len() - 1)]);
+            let len = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
+            ((b.1 - a.1) / len, -(b.0 - a.0) / len)
+        };
+        let edge = |i: usize, s: f64, up: f64| -> P3 {
+            let n = side(i);
+            [line[i].0 + n.0 * half * s, top[i] + up, line[i].1 + n.1 * half * s]
+        };
+        for i in 0..line.len() - 1 {
+            mesh.quad([edge(i, -1.0, 0.0), edge(i, 1.0, 0.0), edge(i + 1, 1.0, 0.0), edge(i + 1, -1.0, 0.0)], [0.0, 1.0, 0.0], [surface; 4]);
+            mesh.quad([edge(i, -1.0, -slab), edge(i, 1.0, -slab), edge(i + 1, 1.0, -slab), edge(i + 1, -1.0, -slab)], [0.0, -1.0, 0.0], [dark; 4]);
+            for s in [-1.0, 1.0] {
+                let n = side(i);
+                mesh.quad([edge(i, s, -slab), edge(i + 1, s, -slab), edge(i + 1, s, parapet), edge(i, s, parapet)], [n.0 * s, 0.0, n.1 * s], [dark, dark, concrete, concrete]);
+            }
+        }
+        // A pier every thirty metres or so, where there is far enough to the ground to want one.
+        let every = (30.0 / 6.0) as usize;
+        for i in (every..line.len().saturating_sub(every)).step_by(every) {
+            let (n, c) = (side(i), line[i]);
+            let foot = |across: f64, along: f64| (c.0 + n.0 * across - n.1 * along, c.1 + n.1 * across + n.0 * along);
+            let reach = (half - 0.4).max(0.4);
+            let corners = [foot(-reach, -0.5), foot(reach, -0.5), foot(reach, 0.5), foot(-reach, 0.5)];
+            let low = corners.iter().map(|&p| self.field.height(p.0, p.1).0).fold(f64::MAX, f64::min);
+            if top[i] - slab - low > 2.5 {
+                self.block(mesh, corners, low - 1.5, top[i] - slab, CONCRETE);
             }
         }
     }

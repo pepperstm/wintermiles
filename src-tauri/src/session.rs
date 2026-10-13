@@ -161,6 +161,30 @@ impl Session {
                 }
             }
             eprintln!("Under cover: {:?}", world.scene.covered);
+            let c = world.scene.counts;
+            eprintln!("Other roads: {} drawn, {} of their bridges", c.roads, c.road_bridges);
+            for deck in &world.scene.decks {
+                let mid = deck.line[deck.line.len() / 2];
+                let (d, nearest) = (0..route.n).map(|i| ((route.x[i] - mid.0).hypot(route.z[i] - mid.1), i)).min_by(|a, b| a.0.total_cmp(&b.0)).unwrap_or((0.0, 0));
+                if d < 60.0 {
+                    eprintln!("Bridge on a {:?} {d:.0} m from the route near {:.0} m", deck.kind, nearest as f64 * route.step);
+                }
+            }
+            // How much the roads add to what is on screen at once, at the place the check looks at.
+            let at = std::env::var("WM_SMOKE_AT").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+            let i = ((at / route.step) as usize).min(route.n - 1);
+            let (cx, cz) = ((route.x[i] / LAYOUT.chunk).floor() as i32, (route.z[i] / LAYOUT.chunk).floor() as i32);
+            let began = std::time::Instant::now();
+            let (mut ways, mut most, mut chunks) = (0, 0, 0);
+            for dx in -LAYOUT.view_chunks..=LAYOUT.view_chunks {
+                for dz in -LAYOUT.view_chunks..=LAYOUT.view_chunks {
+                    let n = world.chunk(cx + dx, cz + dz).roads.vertices();
+                    ways += n;
+                    most = most.max(n);
+                    chunks += 1;
+                }
+            }
+            eprintln!("Road vertices in view at {at:.0} m: {ways} in {chunks} chunks (most in one: {most}); all chunks built in {:.0} ms", began.elapsed().as_secs_f64() * 1000.0);
             for over in &world.scene.overbridges {
                 let mid = over.line[over.line.len() / 2];
                 let nearest = (0..route.n).min_by(|&a, &b| (route.x[a] - mid.0).hypot(route.z[a] - mid.1).total_cmp(&(route.x[b] - mid.0).hypot(route.z[b] - mid.1))).unwrap_or(0);

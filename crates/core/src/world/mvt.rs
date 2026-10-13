@@ -1,5 +1,5 @@
 //! OpenStreetMap's vector tiles (Mapbox Vector Tile format, "Shortbread"
-//! schema): the source for forests, water, bridges and tunnels, and the
+//! schema): the source for forests, water, roads, bridges and tunnels, and the
 //! fallback for buildings when the Overpass API is unavailable. The tiles
 //! carry building outlines but no heights, so those are estimated from
 //! footprint size.
@@ -7,7 +7,7 @@
 use std::f64::consts::PI;
 
 use super::buildings::Footprint;
-use super::scenery::{Area, AreaKind, Crossing, Waterway, WaterwayKind};
+use super::scenery::{Area, AreaKind, Crossing, Road, RoadKind, Waterway, WaterwayKind};
 use super::height::hash2;
 use crate::gpx::Route;
 
@@ -127,6 +127,7 @@ pub struct MapTile {
     pub areas: Vec<Area>,
     pub waterways: Vec<Waterway>,
     pub crossings: Vec<Crossing>,
+    pub roads: Vec<Road>,
 }
 
 /// An attribute value. Numbers are of no interest here.
@@ -262,19 +263,51 @@ fn thin(path: &[(f64, f64)], spacing: f64) -> Vec<(f64, f64)> {
     out
 }
 
-/// Typical overall width in metres of a road or railway of the given kind, for drawing a bridge that carries one.
-fn street_width(kind: &str, rail: bool) -> f32 {
-    match kind {
-        _ if rail => 6.0,
-        "motorway" | "trunk" => 14.0,
-        "primary" | "secondary" => 10.0,
-        "tertiary" | "unclassified" | "residential" | "living_street" => 8.0,
-        "service" | "track" => 5.0,
-        _ => 3.5,
+/// Drops the points a line can do without: those within `tolerance` tile units of the straight
+/// line between the points kept either side (Douglas–Peucker). A straight street becomes two points.
+fn simplify(path: &[(f64, f64)], tolerance: f64) -> Vec<(f64, f64)> {
+    if path.len() < 3 {
+        return path.to_vec();
     }
+    let mut keep = vec![false; path.len()];
+    keep[0] = true;
+    keep[path.len() - 1] = true;
+    let mut spans = vec![(0, path.len() - 1)];
+    while let Some((from, to)) = spans.pop() {
+        let (a, b) = (path[from], path[to]);
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len = dx.hypot(dy).max(1e-12);
+        // Distance from the chord, or from its start if the span doubles back on itself.
+        let off = |p: (f64, f64)| if len < 1e-9 { (p.0 - a.0).hypot(p.1 - a.1) } else { ((p.0 - a.0) * dy - (p.1 - a.1) * dx).abs() / len };
+        let Some((worst, distance)) = (from + 1..to).map(|k| (k, off(path[k]))).max_by(|x, y| x.1.total_cmp(&y.1)) else { continue };
+        if distance > tolerance {
+            keep[worst] = true;
+            spans.extend([(from, worst), (worst, to)]);
+        }
+    }
+    path.iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| *p).collect()
 }
 
-/// Extracts buildings, forests, water, and the bridges and tunnels of roads and railways from one vector tile.
+/// What the tiles call `kind`, as something to draw. `None` for what isn't drawn (runways, roads being built).
+fn road_kind(kind: &str, link: bool, rail: bool) -> Option<RoadKind> {
+    Some(match kind.trim_end_matches("_link") {
+        "tram" | "light_rail" => RoadKind::Tram,
+        _ if rail => RoadKind::Rail,
+        // A slip road is one carriageway of an ordinary main road.
+        "motorway" | "trunk" if link || kind.ends_with("_link") => RoadKind::Main,
+        "motorway" | "trunk" => RoadKind::Major,
+        "primary" | "secondary" => RoadKind::Main,
+        "tertiary" | "unclassified" | "residential" | "living_street" | "busway" => RoadKind::Minor,
+        "service" => RoadKind::Service,
+        "pedestrian" => RoadKind::Pedestrian,
+        "track" => RoadKind::Track,
+        "footway" | "cycleway" | "steps" => RoadKind::Footway,
+        "path" | "bridleway" => RoadKind::Path,
+        _ => return None,
+    })
+}
+
+/// Extracts buildings, forests, water, and roads and railways with their bridges and tunnels from one vector tile.
 pub fn parse_tile(bytes: &[u8], zoom: u32, tx: u32, ty: u32) -> Option<MapTile> {
     let mut found = MapTile::default();
     let mut tile = Reader::new(bytes);
@@ -357,14 +390,16 @@ pub fn parse_tile(bytes: &[u8], zoom: u32, tx: u32, ty: u32) -> Option<MapTile> 
                     }
                 }
                 ("streets", LINE) => {
+                    let Some(kind) = road_kind(layer.text(f, "kind"), layer.flag(f, "link"), layer.flag(f, "rail")) else { continue };
                     let (bridge, tunnel) = (layer.flag(f, "bridge"), layer.flag(f, "tunnel"));
-                    if bridge == tunnel {
-                        continue;
-                    }
-                    let rail = layer.flag(f, "rail");
                     for path in rings(f.geometry)? {
                         for piece in clip(&path, extent) {
-                            found.crossings.push(Crossing { tunnel, rail, width: street_width(layer.text(f, "kind"), rail), line: piece.into_iter().map(to_lat_lon).collect() });
+                            match (bridge, tunnel) {
+                                (false, false) => found.roads.push(Road { kind, line: simplify(&piece, 0.35 / unit_m).into_iter().map(to_lat_lon).collect() }),
+                                // A covered bridge is as good as out of sight.
+                                (true, true) => {}
+                                _ => found.crossings.push(Crossing { tunnel, kind, line: piece.into_iter().map(to_lat_lon).collect() }),
+                            }
                         }
                     }
                 }

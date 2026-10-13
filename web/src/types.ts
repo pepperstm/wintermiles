@@ -157,7 +157,7 @@ export interface RideInit {
   /** How many OpenStreetMap buildings were placed along the route. */
   buildings: number
   /** What other OpenStreetMap scenery the route has. */
-  scenery: { forests: number; waters: number; bridges: number; tunnels: number; overbridges: number }
+  scenery: { forests: number; waters: number; bridges: number; tunnels: number; overbridges: number; roads: number; roadBridges: number }
   /** Stretches of the route in a tunnel or under cover, as `[from, to]` in metres. */
   covered: [number, number][]
   layout: WorldLayout

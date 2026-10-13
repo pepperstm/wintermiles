@@ -1,7 +1,7 @@
 //! Fetches what OpenStreetMap knows about a route's surroundings and caches it,
 //! so each route is normally downloaded only once.
 //!
-//! Scenery — forests, water, bridges and tunnels — comes from OpenStreetMap's own
+//! Scenery — forests, water, roads, bridges and tunnels — comes from OpenStreetMap's own
 //! vector tiles, which are fast and dependable. Buildings have two sources, in
 //! order of preference:
 //! 1. The Overpass API — full detail (mapped heights, storeys, building types),
@@ -14,7 +14,7 @@ use futures::future::select_ok;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use wintermiles_core::gpx::Route;
-use wintermiles_core::world::{corridor_tiles, route_corridor, overpass_query, parse_overpass, parse_tile, Footprint, MapTile, Scenery, MAP_ZOOM};
+use wintermiles_core::world::{corridor_tiles, overpass_query, parse_overpass, parse_tile, route_corridor, Footprint, MapTile, RoadKind, Scenery, MAP_ZOOM};
 
 use crate::now_ms;
 use crate::store::Store;
@@ -27,6 +27,10 @@ const VECTOR_TILES: &str = "https://vector.openstreetmap.org/shortbread_v1";
 const RADIUS_M: f64 = 350.0;
 /// Forests and water are wanted further out: they are what the middle distance is made of.
 const SCENERY_RADIUS_M: f64 = 1000.0;
+/// Roads are kept out to about the same distance, and footpaths — of which a town has thousands —
+/// only where they can be made out. (The test used errs on the generous side, up to double.)
+const ROADS_RADIUS_M: f64 = 700.0;
+const PATHS_RADIUS_M: f64 = 250.0;
 const SPACING_M: f64 = 100.0;
 /// Long routes are asked for in stretches, keeping each request small enough for a public server.
 const STRETCH_M: f64 = 20_000.0;
@@ -41,7 +45,7 @@ const MAX_BUILDINGS: usize = 80_000;
 const MAX_AGE_MS: u64 = 180 * 86_400_000;
 const MAX_AGE_OUTLINES_MS: u64 = 14 * 86_400_000;
 const FORMAT: u32 = 2;
-const SCENERY_FORMAT: u32 = 1;
+const SCENERY_FORMAT: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct Cached {
@@ -165,12 +169,24 @@ pub async fn load(http: &reqwest::Client, store: &Store, route_id: &str, route: 
         Some(Ok(mut tiles)) => {
             let mut scenery = Scenery::default();
             let mut footprints = Vec::new();
+            let (near_roads, near_paths) = (route_corridor(route, ROADS_RADIUS_M), route_corridor(route, PATHS_RADIUS_M));
             for ((x, y), tile) in &mut tiles {
+                tile.roads.retain(|road| {
+                    let middle = road.line[road.line.len() / 2];
+                    if matches!(road.kind, RoadKind::Path | RoadKind::Footway) { near_paths(middle[0], middle[1]) } else { near_roads(middle[0], middle[1]) }
+                });
                 footprints.append(&mut tile.footprints);
                 scenery.add(*x, *y, tile);
             }
             tile_buildings = Some(footprints);
-            eprintln!("Scenery: {} areas, {} waterways, {} bridges and tunnels from {} map tiles", scenery.areas.len(), scenery.waterways.len(), scenery.crossings.len(), scenery.tiles.len());
+            eprintln!(
+                "Scenery: {} areas, {} waterways, {} roads and paths, {} bridges and tunnels from {} map tiles",
+                scenery.areas.len(),
+                scenery.waterways.len(),
+                scenery.roads.len(),
+                scenery.crossings.len(),
+                scenery.tiles.len()
+            );
             let entry = CachedScenery { format: SCENERY_FORMAT, fetched_at: now_ms(), scenery };
             if let Err(e) = store.set(&scenery_name, &entry) {
                 eprintln!("Could not cache scenery: {e}");

@@ -51,6 +51,33 @@ function windowTexture(): THREE.CanvasTexture {
   return texture
 }
 
+/**
+ * Surface of the roads around the route. The left three-eighths is tarmac with
+ * an edge line each side and a broken centre line, for main roads; the rest is
+ * blank, for everything whose colour comes from its vertices alone.
+ */
+function waysTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 128, 64)
+  // The tarmac runs on past the road's edge, so that distant (blurred) roads don't pick up the blank part.
+  ctx.fillStyle = '#3d3f45'
+  ctx.fillRect(0, 0, 80, 64)
+  ctx.fillStyle = '#e8e8e2'
+  ctx.fillRect(1, 0, 2, 64)
+  ctx.fillRect(45, 0, 2, 64)
+  ctx.fillRect(23, 0, 2, 22)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.wrapT = THREE.RepeatWrapping
+  texture.wrapS = THREE.ClampToEdgeWrapping
+  texture.anisotropy = 8
+  return texture
+}
+
 function gridIndices(cells: number): Uint16Array {
   const row = cells + 1
   const idx: number[] = []
@@ -72,16 +99,19 @@ interface GridReply {
   buildings: [Float32Array, Float32Array, Float32Array, Float32Array] | null
   /** Water triangles: positions and colours. */
   water: [Float32Array, Float32Array] | null
+  /** Triangles of the roads around the route: positions, normals, colours and UVs. */
+  roads: [Float32Array, Float32Array, Float32Array, Float32Array] | null
 }
 
 /**
- * Splits a mesh reply: `[ground vertices, trees, building vertices, water vertices]`,
- * then ground positions, normals and colours; trees; building positions, normals,
- * colours and UVs; water positions and colours.
+ * Splits a mesh reply: `[ground vertices, trees, building vertices, water vertices,
+ * road vertices]`, then ground positions, normals and colours; trees; building
+ * positions, normals, colours and UVs; water positions and colours; road positions,
+ * normals, colours and UVs.
  */
 function decodeGrid(buffer: ArrayBuffer): GridReply {
-  const [verts, trees, walls, water] = new Uint32Array(buffer, 0, 4)
-  let offset = 16
+  const [verts, trees, walls, water, roads] = new Uint32Array(buffer, 0, 5)
+  let offset = 20
   const take = (length: number): Float32Array => {
     const view = new Float32Array(buffer, offset, length)
     offset += length * 4
@@ -93,7 +123,8 @@ function decodeGrid(buffer: ArrayBuffer): GridReply {
     colors: take(verts * 3),
     trees: take(trees * 6),
     buildings: walls ? [take(walls * 3), take(walls * 3), take(walls * 3), take(walls * 2)] : null,
-    water: water ? [take(water * 3), take(water * 3)] : null
+    water: water ? [take(water * 3), take(water * 3)] : null,
+    roads: roads ? [take(roads * 3), take(roads * 3), take(roads * 3), take(roads * 2)] : null
   }
 }
 
@@ -102,6 +133,7 @@ interface Chunk {
   trees: THREE.InstancedMesh | null
   buildings: THREE.Mesh | null
   water: THREE.Mesh | null
+  roads: THREE.Mesh | null
   /** Vertex positions, kept for ground-height lookups. */
   positions: Float32Array
 }
@@ -119,6 +151,10 @@ export class Terrain {
   private buildingMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, map: windowTexture() })
   // Slightly see-through, with a sheen where the sun catches it.
   private waterMaterial = new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.86, shininess: 90, specular: 0x8899aa })
+  // Roads lie on the ground and are painted over it, lesser ways first: they are drawn after
+  // everything solid and leave the depth buffer alone, so they can't flicker against the
+  // ground or against each other where they meet.
+  private roadMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, map: waysTexture(), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 })
   private far: THREE.Mesh
   private farAt = ''
   private farBusy = false
@@ -236,7 +272,19 @@ export class Terrain {
         water = new THREE.Mesh(surface, this.waterMaterial)
         this.group.add(water)
       }
-      this.chunks.set(k, { mesh, trees, buildings, water, positions: data.positions })
+      let roads: THREE.Mesh | null = null
+      if (data.roads) {
+        const ways = new THREE.BufferGeometry()
+        ways.setAttribute('position', new THREE.BufferAttribute(data.roads[0], 3))
+        ways.setAttribute('normal', new THREE.BufferAttribute(data.roads[1], 3))
+        ways.setAttribute('color', new THREE.BufferAttribute(data.roads[2], 3))
+        ways.setAttribute('uv', new THREE.BufferAttribute(data.roads[3], 2))
+        ways.computeBoundingSphere()
+        roads = new THREE.Mesh(ways, this.roadMaterial)
+        roads.renderOrder = 1
+        this.group.add(roads)
+      }
+      this.chunks.set(k, { mesh, trees, buildings, water, roads, positions: data.positions })
     } catch (err) {
       if (!this.disposed) void api.log(`terrain chunk ${k} failed: ${err}`)
     } finally {
@@ -301,6 +349,10 @@ export class Terrain {
       this.group.remove(c.water)
       c.water.geometry.dispose()
     }
+    if (c.roads) {
+      this.group.remove(c.roads)
+      c.roads.geometry.dispose()
+    }
   }
 
   dispose(): void {
@@ -314,5 +366,7 @@ export class Terrain {
     this.buildingMaterial.map?.dispose()
     this.buildingMaterial.dispose()
     this.waterMaterial.dispose()
+    this.roadMaterial.map?.dispose()
+    this.roadMaterial.dispose()
   }
 }

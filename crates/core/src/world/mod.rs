@@ -7,6 +7,7 @@ mod dem;
 mod height;
 mod mesh;
 mod mvt;
+mod roads;
 mod scenery;
 mod structures;
 
@@ -15,7 +16,7 @@ pub use dem::{align_dem, align_dem_with, Dem, TILE};
 pub use height::{HeightField, Probe, BRIDGE, OPEN, TUNNEL};
 pub use mesh::TriMesh;
 pub use mvt::{corridor_tiles, parse_building_tile, parse_tile, route_corridor, MapTile, MAP_ZOOM};
-pub use scenery::{route_structures, Area, AreaKind, Crossing, Overbridge, Scene, Scenery, SceneryCounts, Waterway, WaterwayKind};
+pub use scenery::{route_structures, Area, AreaKind, Crossing, Deck, Overbridge, Road, RoadKind, Scene, Scenery, SceneryCounts, Waterway, WaterwayKind};
 pub use structures::Structures;
 
 use std::sync::Arc;
@@ -76,6 +77,8 @@ pub struct GridMesh {
     /// Water surfaces as loose triangles: positions, and a colour per vertex.
     pub water: Vec<f32>,
     pub water_colors: Vec<f32>,
+    /// Other roads, paths and railways, lying on the ground. Painted in order, over the ground.
+    pub roads: TriMesh,
 }
 
 pub struct RoadMesh {
@@ -299,13 +302,26 @@ impl World {
             }
         }
 
+        // The rest of the road network.
+        let beside_route = |p: (f64, f64)| scene.beside_route(&self.route, p);
+        let ground = roads::Ground { x0, z0, cell, m, pad, h: &h, normals: &mesh.normals, wet: &wet, trench: &trench, route: &beside_route };
+        let mut laid = TriMesh::default();
+        for strip in scene.roads_in(cx, cz) {
+            ground.lay(&mut laid, strip);
+        }
+        mesh.roads = laid;
+
         let streams = scene.strips.get(&(cx, cz)).map_or(&[][..], |v| v);
+        let ways = scene.roads_in(cx, cz);
         // Where a tree would stand: `None` if the spot is on the road, in water, in a house, on a cliff or above the tree line.
         let plant = |tx: f64, tz: f64| -> Option<f64> {
             let (fx, fz) = ((tx - x0) / cell + m as f64, (tz - z0) / cell + m as f64);
             let k = (fz as usize).min(pad - 2) * pad + (fx as usize).min(pad - 2);
             let corners = [k, k + 1, k + pad, k + pad + 1];
             if corners.iter().any(|&c| wet[c]) || streams.iter().any(|s| scenery::to_segment((tx, tz), s.a, s.b) < s.half + 1.5) {
+                return None;
+            }
+            if ways.clone().any(|s| !s.steel && scenery::to_segment((tx, tz), s.a, s.b) < s.half + 1.6) {
                 return None;
             }
             // Over a tunnel the mesh is the floor of its trench; the trees belong on the land above.

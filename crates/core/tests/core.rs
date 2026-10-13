@@ -576,7 +576,7 @@ mod buildings {
 
 mod vector_tiles {
     use super::*;
-    use wintermiles_core::world::{corridor_tiles, parse_building_tile, parse_tile, AreaKind, WaterwayKind, MAP_ZOOM};
+    use wintermiles_core::world::{corridor_tiles, parse_building_tile, parse_tile, AreaKind, RoadKind, WaterwayKind, MAP_ZOOM};
 
     // A tiny protobuf writer, enough to assemble a vector tile by hand.
     fn varint(mut v: u64, out: &mut Vec<u8>) {
@@ -718,6 +718,12 @@ mod vector_tiles {
 
         let found = parse_tile(&tile, MAP_ZOOM, 8466, 5890).unwrap();
         assert!(found.footprints.is_empty());
+        // Every sort of way is something to draw, slip roads and all; a runway is not.
+        let kinds = ["motorway", "trunk_link", "secondary", "residential", "service", "pedestrian", "track", "cycleway", "path", "tram", "runway"];
+        let ways: Vec<Vec<u8>> = (0..kinds.len() as u64).map(|k| line(brook, &[0, k])).collect();
+        let all = parse_tile(&layer_with("streets", &["kind"], &kinds, &ways), MAP_ZOOM, 8466, 5890).unwrap();
+        use RoadKind::*;
+        assert_eq!(all.roads.iter().map(|r| r.kind).collect::<Vec<_>>(), [Major, Main, Main, Minor, Service, Pedestrian, Track, Footway, Path, Tram]);
         // The meadow is not scenery; the forest keeps its clearing as a second ring.
         assert_eq!(found.areas.len(), 2);
         assert_eq!((found.areas[0].kind, found.areas[0].rings.len()), (AreaKind::Forest, 2));
@@ -725,12 +731,14 @@ mod vector_tiles {
         // The ditch and the culverted stream are dropped.
         assert_eq!(found.waterways.len(), 1);
         assert_eq!((found.waterways[0].kind, found.waterways[0].line.len()), (WaterwayKind::Stream, 3));
-        // Ordinary road is dropped; the rest are kept with what they are.
+        // Bridges and tunnels are kept apart from road that lies on the ground, each with what it is.
         assert_eq!(found.crossings.len(), 3);
         let c = &found.crossings;
-        assert!(!c[0].tunnel && !c[0].rail && c[0].width > 8.0);
-        assert!(c[1].tunnel && !c[1].rail);
-        assert!(!c[2].tunnel && c[2].rail);
+        assert!(!c[0].tunnel && c[0].kind == RoadKind::Main);
+        assert!(c[1].tunnel && !c[1].kind.is_rail());
+        assert!(!c[2].tunnel && c[2].kind == RoadKind::Rail);
+        assert_eq!(found.roads.len(), 1);
+        assert_eq!((found.roads[0].kind, found.roads[0].line.len()), (RoadKind::Main, 3));
         // The bridge runs off the tile's edge at x = 4096 and is cut there, for the next tile to continue.
         let n = 2f64.powi(MAP_ZOOM as i32);
         let edge = 8467.0 / n * 360.0 - 180.0;
@@ -760,7 +768,7 @@ mod vector_tiles {
 
 mod scenery {
     use super::*;
-    use wintermiles_core::world::{Area, AreaKind, Crossing, Scenery, Waterway, WaterwayKind, BRIDGE, OPEN, ROAD_SECTION, TUNNEL};
+    use wintermiles_core::world::{Area, AreaKind, Crossing, GridMesh, Road, RoadKind, Scenery, Waterway, WaterwayKind, BRIDGE, OPEN, ROAD_SECTION, TUNNEL};
 
     /// Terrain tiles at a constant height, covering the route.
     fn level_ground(route: &Route, height: f64) -> Dem {
@@ -791,7 +799,7 @@ mod scenery {
     }
 
     fn road(route: &Route, tunnel: bool, rail: bool, points: &[(f64, f64)]) -> Crossing {
-        Crossing { tunnel, rail, width: 8.0, line: geo(route, points) }
+        Crossing { tunnel, kind: if rail { RoadKind::Rail } else { RoadKind::Minor }, line: geo(route, points) }
     }
 
     /// 3 km of level road with: a bridge at 500–600 m, a long tunnel at 1000–1400 m, a short one at
@@ -816,6 +824,17 @@ mod scenery {
                 road(&route, true, false, &[(0.0, 1800.0), (0.0, 1830.0)]),
                 road(&route, false, false, &[(-20.0, 2195.0), (20.0, 2205.0)]),
                 road(&route, false, true, &[(6.0, 2500.0), (6.0, 2600.0)]),
+                // A side road's bridge, well clear of the route.
+                road(&route, false, false, &[(300.0, 2700.0), (360.0, 2700.0)]),
+            ],
+            roads: vec![
+                // The road the route itself follows, as mapped; a main road across it at 700 m;
+                // a lane through the wood; a railway beside the lake; and the road to that far bridge.
+                Road { kind: RoadKind::Minor, line: geo(&route, &[(2.0, 0.0), (2.0, 480.0)]) },
+                Road { kind: RoadKind::Main, line: geo(&route, &[(-400.0, 660.0), (0.0, 700.0), (400.0, 740.0)]) },
+                Road { kind: RoadKind::Track, line: geo(&route, &[(40.0, 200.0), (200.0, 200.0)]) },
+                Road { kind: RoadKind::Rail, line: geo(&route, &[(-260.0, 100.0), (-260.0, 600.0)]) },
+                Road { kind: RoadKind::Minor, line: geo(&route, &[(100.0, 2700.0), (300.0, 2700.0)]) },
             ],
         };
         let dem = level_ground(&route, 100.0);
@@ -910,6 +929,71 @@ mod scenery {
     }
 
     #[test]
+    fn lays_the_other_roads_on_the_ground() {
+        let (_, world) = world();
+        let c = world.scene.counts;
+        // The mapped copy of the route's own road is not drawn a second time.
+        assert_eq!((c.roads, c.road_bridges), (4, 1));
+        let vertices = |m: &GridMesh| m.roads.positions.chunks(3).map(|v| [v[0] as f64, v[1] as f64, v[2] as f64]).collect::<Vec<_>>();
+        // The main road crosses at 700 m (z 800): chunk row 3 holds z 720–960.
+        let (west, east) = (world.chunk(-1, 3), world.chunk(0, 3));
+        for (mesh, cx) in [(&west, -1.0), (&east, 0.0)] {
+            let r = &mesh.roads;
+            assert!(r.vertices() > 100, "{} vertices", r.vertices());
+            assert_eq!((r.normals.len(), r.colors.len(), r.uvs.len()), (r.positions.len(), r.positions.len(), r.vertices() * 2));
+            for (k, t) in vertices(mesh).chunks(3).enumerate() {
+                // Cut to the chunk, lying on the ground (road level by the route, natural beyond), facing up.
+                assert!(t.iter().all(|v| v[0] >= cx * CHUNK - 1e-3 && v[0] <= (cx + 1.0) * CHUNK + 1e-3 && v[2] >= 3.0 * CHUNK - 1e-3 && v[2] <= 4.0 * CHUNK + 1e-3), "{t:?}");
+                for v in t {
+                    let ground = on_ground(mesh, v[0], v[2]);
+                    // …except at the junction, where it comes up off the verge to the route's tarmac
+                    // and stops a little way onto it rather than running underneath.
+                    let top = if v[0].abs() < 7.0 { 100.12 } else { ground + 0.08 };
+                    assert!(v[1] > ground + 0.02 && v[1] < top, "road at {} over ground at {ground}", v[1]);
+                    assert!(v[0].abs() > 1.7, "road under the route at x = {}", v[0]);
+                }
+                let (u, w) = ([t[1][0] - t[0][0], t[1][2] - t[0][2]], [t[2][0] - t[0][0], t[2][2] - t[0][2]]);
+                assert!(u[1] * w[0] - u[0] * w[1] > 0.0, "triangle faces down: {t:?}");
+                assert!(r.normals[k * 9 + 1] > 0.5);
+                // A main road has lines on it: its texture coordinates span the marked part of the texture.
+                assert!(r.uvs[k * 6..k * 6 + 6].chunks(2).all(|uv| (0.0..=0.376).contains(&uv[0])));
+            }
+            // Seven and a half metres wide, all the way across the chunk.
+            let across = vertices(mesh).iter().filter(|v| (v[0] - (cx * CHUNK + 100.0)).abs() < 20.0).map(|v| v[2]).fold((f64::MAX, f64::MIN), |(lo, hi), z| (lo.min(z), hi.max(z)));
+            assert!(across.1 - across.0 > 7.5 && across.1 - across.0 < 13.0, "{across:?}");
+            assert!(vertices(mesh).iter().any(|v| v[0] < cx * CHUNK + 10.0) && vertices(mesh).iter().any(|v| v[0] > if cx < 0.0 { -10.0 } else { 230.0 }));
+            // It meets the route's tarmac (at 100.07) at its edge.
+            assert!(vertices(mesh).iter().any(|v| v[0].abs() < 3.5 && v[1] > 100.07));
+        }
+        // Nothing of the route's own road in the chunks it runs through; only the track in the wood.
+        let woods = world.chunk(0, 5);
+        assert!(woods.roads.vertices() > 0);
+        assert!(vertices(&woods).iter().all(|v| v[0] > 38.0 && (v[2] - z(200.0)).abs() < 2.0), "something besides the track");
+        // …and no tree stands on the track.
+        assert!(woods.trees.chunks(6).all(|t| !(t[0] > 40.0 && t[0] < 200.0 && (t[2] as f64 - z(200.0)).abs() < 2.5)));
+        // The railway is a bed with two rails on top, drawn after it.
+        let rail = world.chunk(-2, 5);
+        let dark = rail.roads.colors.chunks(3).position(|c| c[0] < 0.05).expect("rails");
+        assert!(dark > 0 && rail.roads.colors.chunks(3).skip(dark).all(|c| c[0] < 0.05));
+        assert!(vertices(&rail).iter().all(|v| (v[0] + 260.0).abs() < 1.8));
+    }
+
+    /// Height of a chunk's ground mesh under a point.
+    fn on_ground(mesh: &GridMesh, x: f64, z: f64) -> f64 {
+        let (cell, row) = (CHUNK / 24.0, 25);
+        let (x0, z0) = (mesh.positions[0] as f64, mesh.positions[2] as f64);
+        let (fx, fz) = (((x - x0) / cell).clamp(0.0, 24.0 - 1e-9), ((z - z0) / cell).clamp(0.0, 24.0 - 1e-9));
+        let (i, j) = (fx as usize, fz as usize);
+        let (u, v) = (fx - i as f64, fz - j as f64);
+        let h = |di: usize, dj: usize| mesh.positions[((j + dj) * row + i + di) * 3 + 1] as f64;
+        if u + v <= 1.0 {
+            h(0, 0) + (h(1, 0) - h(0, 0)) * u + (h(0, 1) - h(0, 0)) * v
+        } else {
+            h(1, 1) + (h(0, 1) - h(1, 1)) * (1.0 - u) + (h(1, 0) - h(1, 1)) * (1.0 - v)
+        }
+    }
+
+    #[test]
     fn builds_decks_bores_and_overbridges() {
         let (route, world) = world();
         // On the bridge the road's edge is a slab, not a retaining wall.
@@ -934,6 +1018,11 @@ mod scenery {
         assert!(lit.iter().any(|v| between(v, 510.0, 590.0) && v[1] > 100.5 && v[1] < 101.2));
         assert!(lit.iter().any(|v| between(v, 1790.0, 1840.0) && v[0].abs() < 30.0 && v[1] > 105.0));
         assert!(lit.iter().any(|v| between(v, 2180.0, 2220.0) && v[0].abs() < 40.0 && v[1] > 105.0));
+        // The side road's bridge at 2700 m, three hundred metres off: a deck at ground level with parapets.
+        let deck: Vec<&&[f32]> = lit.iter().filter(|v| v[0] > 295.0 && v[0] < 365.0 && between(v, 2690.0, 2710.0)).collect();
+        assert!(deck.len() >= 24 * 10, "{} vertices", deck.len());
+        let ground = world.field.surface(330.0, z(2700.0)).0 as f32;
+        assert!(deck.iter().all(|v| v[1] > ground - 3.0 && v[1] < ground + 3.0) && deck.iter().any(|v| v[1] > ground + 0.9));
         // Nothing hangs in the bore of the open road: no structure intrudes on the space riders use, outside the bridge parapets.
         assert!(lit.iter().all(|v| !(v[0].abs() < 3.0 && v[1] > 100.3 && v[1] < 104.5)), "something is in the road");
     }
@@ -987,6 +1076,6 @@ mod scenery {
         let (a, b) = (plain.chunk(0, -1), mapped.chunk(0, -1));
         assert_eq!(a.positions, b.positions);
         assert_eq!(a.trees, b.trees);
-        assert!(b.water.is_empty() && mapped.structures().lit.vertices() == 0);
+        assert!(b.water.is_empty() && b.roads.vertices() == 0 && mapped.structures().lit.vertices() == 0);
     }
 }

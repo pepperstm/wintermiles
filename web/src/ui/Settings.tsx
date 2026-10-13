@@ -311,8 +311,8 @@ export function SettingsScreen(): React.JSX.Element {
           onChange={(v) => update((s) => ({ ...s, buildings: v }))}
         />
         <Toggle
-          label="Forests, water, bridges and tunnels from OpenStreetMap"
-          hint="Downloads the map of each route's surroundings once: woods are planted where they really are, lakes and rivers are filled, and the road is carried over bridges and through tunnels where the real one is."
+          label="Forests, water, roads, bridges and tunnels from OpenStreetMap"
+          hint="Downloads the map of each route's surroundings once: woods are planted where they really are, lakes and rivers are filled, the other roads, paths and railways are laid out, and your road is carried over bridges and through tunnels where the real one is."
           value={settings.scenery}
           onChange={(v) => update((s) => ({ ...s, scenery: v }))}
         />

@@ -177,14 +177,14 @@ fn f32_bytes(header: &[u32], parts: &[&[f32]]) -> Vec<u8> {
     out
 }
 
-/// Layout: `[ground vertices, trees, building vertices, water vertices]` as u32, then as f32:
-/// ground positions, normals and colours; trees; building positions, normals, colours and UVs;
-/// water positions and colours.
+/// Layout: `[ground vertices, trees, building vertices, water vertices, road vertices]` as u32,
+/// then as f32: ground positions, normals and colours; trees; building positions, normals, colours
+/// and UVs; water positions and colours; road positions, normals, colours and UVs.
 fn grid_response(mesh: GridMesh) -> Response {
-    let b = &mesh.buildings;
+    let (b, r) = (&mesh.buildings, &mesh.roads);
     Response::new(f32_bytes(
-        &[(mesh.positions.len() / 3) as u32, (mesh.trees.len() / 6) as u32, b.vertices() as u32, (mesh.water.len() / 3) as u32],
-        &[&mesh.positions, &mesh.normals, &mesh.colors, &mesh.trees, &b.positions, &b.normals, &b.colors, &b.uvs, &mesh.water, &mesh.water_colors],
+        &[(mesh.positions.len() / 3) as u32, (mesh.trees.len() / 6) as u32, b.vertices() as u32, (mesh.water.len() / 3) as u32, r.vertices() as u32],
+        &[&mesh.positions, &mesh.normals, &mesh.colors, &mesh.trees, &b.positions, &b.normals, &b.colors, &b.uvs, &mesh.water, &mesh.water_colors, &r.positions, &r.normals, &r.colors, &r.uvs],
     ))
 }
 
