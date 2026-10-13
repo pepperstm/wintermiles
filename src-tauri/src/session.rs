@@ -16,7 +16,7 @@ use wintermiles_core::gamify::{apply_ride, RideFacts};
 use wintermiles_core::gpx::{build_route, demo_route, parse_gpx, Climb, Route};
 use wintermiles_core::ride::{ClimbResult, RideEngine, RideInput, Rival};
 use wintermiles_core::types::{PersonalBest, Profile, RideSummary, Settings, TrainerMode};
-use wintermiles_core::world::{align_dem, SceneryCounts, World, WorldLayout, LAYOUT};
+use wintermiles_core::world::{align_dem_with, route_structures, SceneryCounts, World, WorldLayout, LAYOUT};
 
 use crate::devices::sim::DemoRider;
 use crate::devices::Devices;
@@ -139,7 +139,9 @@ impl Session {
             },
             mapdata::load(http, store, route_id, &route, want_buildings, want_scenery)
         );
-        let dem_offset = dem.as_ref().map_or(0.0, |d| align_dem(&mut route, d));
+        // A route with no elevation of its own takes it from the terrain — except on bridges and in tunnels.
+        let structures = map.scenery.as_ref().map(|s| route_structures(&route, s)).unwrap_or_default();
+        let dem_offset = dem.as_ref().map_or(0.0, |d| align_dem_with(&mut route, d, &structures));
         let _ = app.emit("ride:loading", "Building the world…");
 
         let pb: Option<PersonalBest> = store.get(&format!("pb-{route_id}"));

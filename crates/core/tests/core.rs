@@ -939,6 +939,48 @@ mod scenery {
     }
 
     #[test]
+    fn a_road_with_no_elevation_runs_level_through_a_hill_and_over_a_valley() {
+        use wintermiles_core::world::{align_dem_with, route_structures};
+        // Terrain that is flat at 1000 m, with a 100 m ridge across the road at 1000–1400 m along
+        // and a 60 m deep valley at 2000–2200 m. (North is up; a tile row is about 27 m here.)
+        let mut route = build_route("planner", &straight(3000.0, |_| None)).unwrap();
+        let (zoom, keys) = Dem::plan(&route).unwrap();
+        let m_per_row = 40_075_016.7 * 45f64.to_radians().cos() / 2f64.powi(zoom as i32) / TILE as f64;
+        let n = 2f64.powi(zoom as i32);
+        let row_of = |lat: f64| (1.0 - (lat.to_radians().tan() + 1.0 / lat.to_radians().cos()).ln() / std::f64::consts::PI) / 2.0 * n * TILE as f64;
+        let start_row = row_of(route.lat[0]);
+        let mut dem = Dem::new(zoom);
+        for key in &keys {
+            let mut px = vec![0u8; TILE * TILE * 3];
+            for y in 0..TILE {
+                let along = (start_row - (key.1 as f64 * TILE as f64 + y as f64)) * m_per_row;
+                let h = 1000.0 + if (1000.0..1400.0).contains(&along) { 100.0 } else if (2000.0..2200.0).contains(&along) { -60.0 } else { 0.0 };
+                let v = (h + 32768.0) as u32;
+                for x in 0..TILE {
+                    px[(y * TILE + x) * 3] = (v / 256) as u8;
+                    px[(y * TILE + x) * 3 + 1] = (v % 256) as u8;
+                }
+            }
+            assert!(dem.insert_rgb(*key, &px, 3));
+        }
+        let scenery = Scenery {
+            crossings: vec![road(&route, true, false, &[(0.0, 950.0), (0.0, 1450.0)]), road(&route, false, false, &[(0.0, 1950.0), (0.0, 2250.0)])],
+            ..Default::default()
+        };
+        // Without knowing about them, the road goes over the ridge and down into the valley.
+        let mut naive = route.clone();
+        align_dem(&mut naive, &dem);
+        let at = |r: &Route, m: f64| r.ele[(m / r.step) as usize] as f64;
+        assert!(at(&naive, 1200.0) > 1080.0 && at(&naive, 2100.0) < 960.0, "{} {}", at(&naive, 1200.0), at(&naive, 2100.0));
+        // Knowing, it stays level through the tunnel and across the bridge.
+        let structures = route_structures(&route, &scenery);
+        assert_eq!(structures[(1200.0 / route.step) as usize], TUNNEL);
+        align_dem_with(&mut route, &dem, &structures);
+        assert!(close(at(&route, 1200.0), 1000.0, 3.0) && close(at(&route, 2100.0), 1000.0, 3.0), "{} {}", at(&route, 1200.0), at(&route, 2100.0));
+        assert!(route.ascent < 10.0 && route.climbs.is_empty(), "ascent {}", route.ascent);
+    }
+
+    #[test]
     fn a_world_without_scenery_is_unchanged() {
         let route = Arc::new(build_route("plain", &straight(1000.0, |_| Some(100.0))).unwrap());
         let (plain, mapped) = (World::new(route.clone(), None, 0.0), World::with_map(route.clone(), None, 0.0, Some(&Scenery::default()), &[]));

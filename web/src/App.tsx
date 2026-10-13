@@ -36,7 +36,7 @@ async function runSmoke(setScreen: (s: Screen) => void): Promise<void> {
   }
   setTimeout(() => {
     const tiles = document.querySelectorAll('.leaflet-tile-loaded').length
-    const info = `${document.body.innerText}\n\n--- map tiles loaded: ${tiles}\n--- world: ${JSON.stringify(smokeHooks.world)}\n--- last ride state: ${JSON.stringify(smokeHooks.state)}`
+    const info = `${document.body.innerText}\n\n--- map tiles loaded: ${tiles}\n--- world: ${JSON.stringify(smokeHooks.world)}\n--- frames drawn: ${(smokeHooks.world as { frames?: () => number } | null)?.frames?.() ?? 0}\n--- last ride state: ${JSON.stringify(smokeHooks.state)}`
     void api.smoke.done(smokeHooks.capture?.() ?? null, info)
   }, smoke.ms)
 }

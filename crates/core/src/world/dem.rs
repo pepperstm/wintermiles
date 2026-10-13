@@ -97,6 +97,13 @@ impl Dem {
 /// Returns the vertical offset to add to terrain heights so they agree with the
 /// route's own elevation on average.
 pub fn align_dem(route: &mut Route, dem: &Dem) -> f64 {
+    align_dem_with(route, dem, &[])
+}
+
+/// As `align_dem`, knowing which route samples are on a bridge or in a tunnel
+/// (non-zero in `structures`; empty if unknown). It matters only when the route
+/// has no elevation of its own and takes it from the terrain.
+pub fn align_dem_with(route: &mut Route, dem: &Dem, structures: &[u8]) -> f64 {
     let mut sampled = vec![f32::NAN; route.n];
     let mut last = f32::NAN;
     let mut valid = 0;
@@ -116,6 +123,24 @@ pub fn align_dem(route: &mut Route, dem: &Dem) -> f64 {
     sampled[..first_valid].fill(first);
 
     if !route.has_elevation {
+        // The terrain goes over the hill a tunnel goes through, and down into the valley a
+        // bridge goes across; the road does neither, and runs evenly from one end to the other.
+        let mut from = 0;
+        for i in 1..=route.n {
+            if i < route.n && structures.get(i).copied().unwrap_or(0) == structures.get(from).copied().unwrap_or(0) {
+                continue;
+            }
+            if structures.get(from).copied().unwrap_or(0) != 0 {
+                // Anchored some thirty metres outside each end: a tunnel mouth is cut into a slope
+                // that the coarse terrain grid smears across the road in front of it.
+                let reach = ((30.0 / route.step).round() as usize).max(1);
+                let (a, b) = (from.saturating_sub(reach), (i - 1 + reach).min(route.n - 1));
+                for k in a..=b {
+                    sampled[k] = sampled[a] + (sampled[b] - sampled[a]) * (k - a) as f32 / (b - a).max(1) as f32;
+                }
+            }
+            from = i;
+        }
         // Terrain grids are coarse (tens of metres per cell), which on a road cut into a
         // steep hillside reads as wild gradient swings — hence the much heavier smoothing.
         route.apply_elevation(sampled, 100.0);

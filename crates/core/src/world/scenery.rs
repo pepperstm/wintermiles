@@ -311,6 +311,14 @@ fn join(mut lines: Vec<(Crossing, Vec<(f64, f64)>)>) -> Vec<(Crossing, Vec<(f64,
     lines
 }
 
+/// Which route samples run along a mapped bridge (`BRIDGE`) or tunnel (`TUNNEL`), from
+/// their position alone — usable before the route has any elevation.
+pub fn route_structures(route: &Route, scenery: &Scenery) -> Vec<u8> {
+    let roads: Vec<(bool, Vec<(f64, f64)>)> =
+        scenery.crossings.iter().filter(|c| !c.rail && c.line.len() >= 2).map(|c| (c.tunnel, c.line.iter().map(|p| route.to_local(p[0], p[1])).collect())).collect();
+    classify(route, &roads)
+}
+
 impl Scene {
     pub fn new(route: &Route, scenery: &Scenery) -> Self {
         let local = |line: &[[f64; 2]]| line.iter().map(|p| route.to_local(p[0], p[1])).collect::<Vec<_>>();
@@ -341,8 +349,7 @@ impl Scene {
         }
 
         // Roads only: a cyclist is never on the railway that happens to run alongside.
-        let roads: Vec<(bool, Vec<(f64, f64)>)> = scenery.crossings.iter().filter(|c| !c.rail && c.line.len() >= 2).map(|c| (c.tunnel, local(&c.line))).collect();
-        scene.kinds = classify(route, &roads);
+        scene.kinds = route_structures(route, scenery);
 
         // Short tunnels become open road passing under a slab, with banks either side.
         for (kind, from, to) in runs(&scene.kinds.clone()) {

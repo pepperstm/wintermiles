@@ -11,11 +11,11 @@ mod scenery;
 mod structures;
 
 pub use buildings::{overpass_query, parse_overpass, BuildingMesh, Buildings, Footprint};
-pub use dem::{align_dem, Dem, TILE};
+pub use dem::{align_dem, align_dem_with, Dem, TILE};
 pub use height::{HeightField, Probe, BRIDGE, OPEN, TUNNEL};
 pub use mesh::TriMesh;
 pub use mvt::{corridor_tiles, parse_building_tile, parse_tile, route_corridor, MapTile, MAP_ZOOM};
-pub use scenery::{Area, AreaKind, Crossing, Overbridge, Scene, Scenery, SceneryCounts, Waterway, WaterwayKind};
+pub use scenery::{route_structures, Area, AreaKind, Crossing, Overbridge, Scene, Scenery, SceneryCounts, Waterway, WaterwayKind};
 pub use structures::Structures;
 
 use std::sync::Arc;

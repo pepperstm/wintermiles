@@ -64,6 +64,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
   useEffect(() => {
     let disposed = false
     let raf = 0
+    let pump = 0
     let observer: ResizeObserver | null = null
     let offState: (() => void) | null = null
     const offLoading = api.ride.onLoading(setLoading)
@@ -99,7 +100,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
         observer.observe(canvas)
         world.resize(canvas.clientWidth, canvas.clientHeight)
         smokeHooks.capture = () => world.capture()
-        smokeHooks.world = { realTerrain: started.realTerrain, buildings: started.buildings, scenery: started.scenery, covered: started.covered }
+        smokeHooks.world = { realTerrain: started.realTerrain, buildings: started.buildings, scenery: started.scenery, covered: started.covered, frames: () => frames }
         const smoke = await api.smoke.config()
         for (let i = 0; i < (smoke?.camera ?? 0); i++) world.cycleCamera()
 
@@ -118,6 +119,8 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
         setLoading('')
 
         let last = performance.now()
+        let frames = 0
+        let frameFailed = false
         const loop = (now: number): void => {
           raf = requestAnimationFrame(loop)
           const dt = Math.min(0.1, (now - last) / 1000)
@@ -126,24 +129,39 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
           const s = latest.s
           // Glide between state updates so motion is smooth at any display refresh rate.
           const ahead = s.moving ? Math.min(0.25, (now - latest.at) / 1000) : 0
-          world.frame(dt, {
-            distance: Math.min(loaded.total, s.distance + s.speed * ahead),
-            speed: s.speed,
-            cadence: s.cadence ?? (s.moving && s.power > 20 ? 80 : 0),
-            rivals: s.rivals.map((r) => {
-              const info = rivalInfo.get(r.id)
-              return {
-                id: r.id,
-                name: info?.name ?? '',
-                color: info?.color ?? 0xffffff,
-                ghost: info?.kind === 'ghost',
-                distance: Math.min(loaded.total, r.distance + r.speed * ahead),
-                speed: r.speed
-              }
+          try {
+            world.frame(dt, {
+              distance: Math.min(loaded.total, s.distance + s.speed * ahead),
+              speed: s.speed,
+              cadence: s.cadence ?? (s.moving && s.power > 20 ? 80 : 0),
+              rivals: s.rivals.map((r) => {
+                const info = rivalInfo.get(r.id)
+                return {
+                  id: r.id,
+                  name: info?.name ?? '',
+                  color: info?.color ?? 0xffffff,
+                  ghost: info?.kind === 'ghost',
+                  distance: Math.min(loaded.total, r.distance + r.speed * ahead),
+                  speed: r.speed
+                }
+              })
             })
-          })
+            frames++
+          } catch (err) {
+            // Report a broken frame once, rather than failing silently sixty times a second.
+            if (!frameFailed) void api.log(`frame failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+            frameFailed = true
+          }
         }
         raf = requestAnimationFrame(loop)
+        // A window that is hidden behind others gets no animation frames. The automated check must
+        // still end up with a picture, so there it also draws on a timer.
+        if (smoke) {
+          pump = window.setInterval(() => {
+            cancelAnimationFrame(raf)
+            loop(performance.now())
+          }, 100)
+        }
       } catch (err) {
         if (!disposed) setError(errorText(err))
       }
@@ -152,6 +170,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
     return () => {
       disposed = true
       cancelAnimationFrame(raf)
+      window.clearInterval(pump)
       observer?.disconnect()
       offState?.()
       offLoading()
