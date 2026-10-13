@@ -91,7 +91,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
         }
         const canvas = canvasRef.current!
         const imperial = settingsRef.current.units === 'imperial'
-        const world = new World(canvas, loaded, started.layout, (i) => `${i} ${imperial ? 'mi' : 'km'}`, imperial ? 1609.344 : 1000)
+        const world = new World(canvas, loaded, started.layout, started.covered, (i) => `${i} ${imperial ? 'mi' : 'km'}`, imperial ? 1609.344 : 1000)
         worldRef.current = world
         await world.load()
         if (disposed) return
@@ -99,7 +99,9 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
         observer.observe(canvas)
         world.resize(canvas.clientWidth, canvas.clientHeight)
         smokeHooks.capture = () => world.capture()
-        smokeHooks.world = { realTerrain: started.realTerrain, buildings: started.buildings }
+        smokeHooks.world = { realTerrain: started.realTerrain, buildings: started.buildings, scenery: started.scenery, covered: started.covered }
+        const smoke = await api.smoke.config()
+        for (let i = 0; i < (smoke?.camera ?? 0); i++) world.cycleCamera()
 
         const rivalInfo = new Map(started.rivals.map((r) => [r.id, r]))
         let latest: { s: RideState; at: number } | null = null

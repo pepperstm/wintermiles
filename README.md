@@ -7,7 +7,7 @@ Open source (MIT) for **Windows, macOS and Linux**. Written in **Rust**, with a 
 ## What it does
 
 - **GPX in, virtual ride out.** Import routes from Strava, Komoot, RideWithGPS or a bike computer. Routes with no elevation data (planner exports) get it filled in automatically.
-- **A 3D version of the real place.** The road follows your GPX; the surrounding landscape is built from open elevation data, so the mountains on the horizon are the real ones, and the towns and villages you pass through are built from OpenStreetMap's building outlines. A live OpenStreetMap minimap and a gradient-coloured elevation profile sit alongside. Works offline with generated hills.
+- **A 3D version of the real place.** The road follows your GPX; the surrounding landscape is built from open elevation data, so the mountains on the horizon are the real ones. OpenStreetMap supplies the rest: the towns and villages you pass through, forests where the real forests are, lakes, rivers and streams, and the bridges and tunnels of the real road — you ride over the river on a bridge deck, into the hillside through a lit tunnel, and under the motorway or railway that crosses overhead. A live OpenStreetMap minimap and a gradient-coloured elevation profile sit alongside. Works offline with generated hills.
 - **Smart trainer control.** Gradient simulation (with a "trainer difficulty" setting) or ERG mode, over Bluetooth FTMS, Tacx FE-C-over-Bluetooth, or ANT+ FE-C.
 - **Sensors.** Power meters, heart-rate straps, speed and cadence sensors over Bluetooth and ANT+. When several devices report the same metric the most direct one wins (crank power meter over trainer estimate, strap over relayed HR). Basic trainers with only a speed sensor can use estimated power.
 - **Gamification.** Race the ghost of your best time on each route, chase pace riders at fixed W/kg, get timed on every auto-detected climb (categorised 4 → HC), and earn XP, levels and badges.
@@ -26,12 +26,14 @@ crates/core/      Pure Rust library, no I/O — fully unit-tested
   fit             FIT activity encoder
   devices/        Bluetooth GATT and ANT+ protocol encode/decode; the sensor hub
   world/          Terrain: elevation tiles, height field, chunk / horizon / road meshes;
-                  OpenStreetMap buildings (Overpass JSON and vector-tile decoding, extrusion)
+                  OpenStreetMap buildings (Overpass JSON and vector-tile decoding, extrusion);
+                  scenery (forests, water, matching the route to mapped bridges and tunnels)
+                  and structures (bridge decks and piers, tunnel bores and portals, overbridges)
   health          Streaming scanner for Apple Health exports
 src-tauri/        The app (Rust, Tauri 2)
   devices/        Bluetooth via the OS stack (btleplug); ANT+ USB stick via libusb; demo rider
   session         50 Hz simulation loop, trainer control, saving rides
-  terrain, buildings, strava, health, store, secrets
+  terrain, mapdata, strava, health, store, secrets
 web/              The window contents (TypeScript, React, three.js)
   world/          Uploads the meshes Rust produced to the GPU; camera; rider models
   ui/             Screens and the ride HUD
@@ -54,11 +56,12 @@ Be aware of what has and has not been proven:
 
 | Area | Status |
 | --- | --- |
-| GPX parsing, route building, climb detection, physics, ride recording, gamification, terrain and building generation, Health export scanning | Unit-tested (`cargo test`, 41 tests) |
+| GPX parsing, route building, climb detection, physics, ride recording, gamification, terrain, building and scenery generation, Health export scanning | Unit-tested (`cargo test`, 47 tests) |
 | FIT export | Unit-tested by decoding the output with an independent FIT parser |
 | Bluetooth and ANT+ **protocol** encoding/decoding (FTMS, Cycling Power, CSC, HR, ANT framing, ANT+ HR/power/speed/cadence/FE-C pages) | Unit-tested against hand-built packets |
 | Full app: import → real-terrain download → ride → save FIT → personal best → summary | Verified by automated runs with the demo rider on macOS (Apple Silicon), in debug, dev-server and release builds |
-| OpenStreetMap buildings | Verified against the live services on one Alpine route, through both data sources. Dense cities and very long routes have not been tried. |
+| OpenStreetMap buildings | Verified against the live services on two Alpine routes and one across a city (about 5,900 buildings), through both data sources. Very long routes have not been tried. |
+| Forests, water, bridges, tunnels, overpasses | Verified against the live map tiles on the same three routes: a valley town with a river, a reservoir road with a 1 km tunnel, and a city crossed by motorway and railway viaducts. Checked from screenshots of the automated run, not from a long ride. |
 | Bluetooth and ANT+ with **real hardware** | **Not yet tested.** Written to the published specifications, but no trainer, sensor or ANT+ stick has been connected to it — not even a scan has been run. Expect to find bugs; please report them with your device model. |
 | Strava connect and upload | **Not yet tested against the live API** (needs a personal API key). |
 | Apple Health import | Scanner unit-tested; not yet run on a real multi-GB export. |
@@ -131,7 +134,13 @@ Direct two-way sync would need a companion iPhone app using HealthKit. That is t
 
 - **Speed is simulated from power**, not read from the trainer: `P = (m·g·(sinθ + Crr·cosθ) + ½·ρ·CdA·v²)·v`, with air density falling with altitude. Trainer difficulty changes only what the trainer feels like, never your virtual speed.
 - **Terrain** near the road is pinned to the route's own elevation so the road never floats or tunnels, and blends into real elevation data further out. Where hairpin arms sit almost on top of each other, the ground takes the lower arm's level and the upper arm stands on a retaining wall.
-- **Buildings** come from OpenStreetMap. The first time you ride a route, the outlines within about 350 m of the road are downloaded and kept on your computer (refreshed twice a year). The detailed source (the Overpass API) includes mapped heights and storey counts but runs on overloaded volunteer servers, so if none answers within a few seconds the app uses OpenStreetMap's vector tiles instead — outlines only, with heights estimated from footprint size — and tries the detailed source again a fortnight later. Simple rectangular houses get pitched roofs; everything else is a flat-roofed block. Anything mapped on top of the road itself is left out. Fetching buildings sends the route's coordinates to those OpenStreetMap servers; turn it off under **Settings → Virtual world** if you prefer.
+- **Buildings** come from OpenStreetMap. The first time you ride a route, the outlines within about 350 m of the road are downloaded and kept on your computer (refreshed twice a year). The detailed source (the Overpass API) includes mapped heights and storey counts but runs on overloaded volunteer servers, so if none answers within a few seconds the app uses OpenStreetMap's vector tiles instead — outlines only, with heights estimated from footprint size — and tries the detailed source again a fortnight later. Simple rectangular houses get pitched roofs; everything else is a flat-roofed block. Anything mapped on top of the road itself is left out. Fetching buildings or scenery sends the route's coordinates (or, for the tiles, which map squares it passes through) to those OpenStreetMap servers; each can be turned off under **Settings → Virtual world** if you prefer.
+- **Forests, water, bridges and tunnels** come from OpenStreetMap's vector tiles, for about a kilometre either side of the road, downloaded with the buildings and kept in the same way.
+  - *Forests* are planted where they are mapped; elsewhere only a scattering of trees is kept.
+  - *Lakes and wide rivers* are sunk into the terrain and filled; rivers and streams mapped as lines are laid on the ground as ribbons. Water needs real terrain to lie in, so it is left out when riding on generated hills.
+  - *Bridges and tunnels*: the route is compared with the mapped road network, and where it runs along a bridge or tunnel the road is treated as one — the ground drops away beneath a bridge deck (with piers under long ones), and a tunnel is bored through the hillside with a portal at each end. A recorded GPS track that strays more than about nine metres from the mapped road won't be matched, and that stretch is drawn as ordinary road on an embankment, as before.
+  - *Overpasses and underpasses*: a road or railway bridge that crosses the route is drawn overhead with its approach embankments. Tunnels shorter than 50 m are drawn the same way, as a slab over an open road. The map doesn't say how high such a bridge is, so all are given the same headroom.
+  - The camera follows the rider into tunnels, close behind, whichever view is selected.
 - **Elevation is smoothed** (~60 m) before gradients are computed, so noisy GPS altitude doesn't make the trainer twitch. Routes with their own elevation data give better gradients than ones filled in from terrain data, which is coarse on steep hillsides.
 
 ## Roadmap
@@ -140,13 +149,13 @@ Direct two-way sync would need a companion iPhone app using HealthKit. That is t
 - Companion iPhone/Apple Watch app for real HealthKit sync and native watch heart rate
 - Native renderer in place of the webview
 - Structured workouts (ERG intervals) along a route
-- More scenery from OpenStreetMap (forests, water, bridges and tunnels); mapped roof shapes
+- More from OpenStreetMap: mapped roof shapes, other land cover (farmland, rock, glaciers), broadleaf trees, the rest of the road network
 - Riding with friends over the network
 - Wahoo legacy protocol, steering and virtual gears
 
 ## Data and credits
 
-- Map tiles and building data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), via the OSM tile servers, the public [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) instances and [vector.openstreetmap.org](https://vector.openstreetmap.org). Heavy users should configure their own servers, per the OSM usage policies.
+- Map tiles, building and scenery data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), via the OSM tile servers, the public [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) instances and [vector.openstreetmap.org](https://vector.openstreetmap.org). Heavy users should configure their own servers, per the OSM usage policies.
 - Terrain from the [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) open dataset (Tilezen/Mapzen; sources include SRTM, USGS 3DEP, EU-DEM and others).
 - ANT+ access uses the ANT+ managed network key, which is issued to ANT+ adopters. If you distribute builds, register as an adopter (free) at [thisisant.com](https://www.thisisant.com).
 

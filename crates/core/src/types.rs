@@ -82,6 +82,8 @@ pub struct Settings {
     pub real_terrain: bool,
     /// Show buildings from OpenStreetMap along the route.
     pub buildings: bool,
+    /// Show forests, water, bridges and tunnels from OpenStreetMap.
+    pub scenery: bool,
     pub strava_auto_upload: bool,
     pub export_dir: String,
 }
@@ -96,6 +98,7 @@ impl Default for Settings {
             bots: Default::default(),
             real_terrain: true,
             buildings: true,
+            scenery: true,
             strava_auto_upload: false,
             export_dir: String::new(),
         }

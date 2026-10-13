@@ -11,6 +11,7 @@ export interface Settings {
   bots: { enabled: boolean; wkg: number[] }
   realTerrain: boolean
   buildings: boolean
+  scenery: boolean
   stravaAutoUpload: boolean
   exportDir: string
 }
@@ -23,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bots: { enabled: true, wkg: [1.5, 2.2, 3.0] },
   realTerrain: true,
   buildings: true,
+  scenery: true,
   stravaAutoUpload: false,
   exportDir: ''
 }
@@ -154,6 +156,10 @@ export interface RideInit {
   realTerrain: boolean
   /** How many OpenStreetMap buildings were placed along the route. */
   buildings: number
+  /** What other OpenStreetMap scenery the route has. */
+  scenery: { forests: number; waters: number; bridges: number; tunnels: number; overbridges: number }
+  /** Stretches of the route in a tunnel or under cover, as `[from, to]` in metres. */
+  covered: [number, number][]
   layout: WorldLayout
   rivals: RivalInfo[]
   pbClimbs: Record<number, number>

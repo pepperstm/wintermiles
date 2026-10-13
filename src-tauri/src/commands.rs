@@ -177,13 +177,14 @@ fn f32_bytes(header: &[u32], parts: &[&[f32]]) -> Vec<u8> {
     out
 }
 
-/// Layout: `[ground vertices, trees, building vertices]` as u32, then as f32: ground
-/// positions, normals and colours; trees; building positions, normals, colours and UVs.
+/// Layout: `[ground vertices, trees, building vertices, water vertices]` as u32, then as f32:
+/// ground positions, normals and colours; trees; building positions, normals, colours and UVs;
+/// water positions and colours.
 fn grid_response(mesh: GridMesh) -> Response {
     let b = &mesh.buildings;
     Response::new(f32_bytes(
-        &[(mesh.positions.len() / 3) as u32, (mesh.trees.len() / 6) as u32, (b.positions.len() / 3) as u32],
-        &[&mesh.positions, &mesh.normals, &mesh.colors, &mesh.trees, &b.positions, &b.normals, &b.colors, &b.uvs],
+        &[(mesh.positions.len() / 3) as u32, (mesh.trees.len() / 6) as u32, b.vertices() as u32, (mesh.water.len() / 3) as u32],
+        &[&mesh.positions, &mesh.normals, &mesh.colors, &mesh.trees, &b.positions, &b.normals, &b.colors, &b.uvs, &mesh.water, &mesh.water_colors],
     ))
 }
 
@@ -218,6 +219,18 @@ pub async fn ride_road_mesh(state: State<'_, AppState>) -> Res<Response> {
     let world = state.current_session()?.world.clone();
     let mesh = tauri::async_runtime::spawn_blocking(move || world.road()).await.map_err(blocking_err)?;
     Ok(Response::new(f32_bytes(&[], &[&mesh.positions, &mesh.uvs])))
+}
+
+/// Bridges, tunnels and whatever crosses overhead. Layout: `[sunlit vertices, unlit vertices]`
+/// as u32, then as f32: sunlit positions, normals and colours; unlit positions and colours.
+#[tauri::command]
+pub async fn ride_structures(state: State<'_, AppState>) -> Res<Response> {
+    let world = state.current_session()?.world.clone();
+    let s = tauri::async_runtime::spawn_blocking(move || world.structures()).await.map_err(blocking_err)?;
+    Ok(Response::new(f32_bytes(
+        &[s.lit.vertices() as u32, s.unlit.vertices() as u32],
+        &[&s.lit.positions, &s.lit.normals, &s.lit.colors, &s.unlit.positions, &s.unlit.colors],
+    )))
 }
 
 #[tauri::command]
@@ -321,6 +334,8 @@ pub async fn health_import(app: AppHandle) -> Res<Option<HealthSummary>> {
 pub struct SmokeConfig {
     screen: String,
     ms: u64,
+    /// Which camera view to use on the ride screen.
+    camera: u32,
 }
 
 #[tauri::command]
@@ -329,6 +344,7 @@ pub fn smoke_config() -> Option<SmokeConfig> {
     Some(SmokeConfig {
         screen: std::env::var("WM_SMOKE_SCREEN").unwrap_or_else(|_| "ride".into()),
         ms: std::env::var("WM_SMOKE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(9000),
+        camera: std::env::var("WM_SMOKE_CAM").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
     })
 }
 

@@ -80,12 +80,15 @@ function roadTexture(): THREE.CanvasTexture {
 }
 
 /** Wraps the road ribbon computed in Rust (`section` vertices across, per route sample) in a mesh. */
-function buildRoad(buffer: ArrayBuffer, n: number, section: number, texture: THREE.Texture): THREE.Mesh {
+function buildRoad(buffer: ArrayBuffer, n: number, section: number, texture: THREE.Texture, dim: (sample: number) => number): THREE.Mesh {
   const verts = n * section
   const pos = new Float32Array(buffer, 0, verts * 3)
   const uv = new Float32Array(buffer, verts * 12, verts * 2)
   const nor = new Float32Array(verts * 3)
   for (let i = 1; i < nor.length; i += 3) nor[i] = 1
+  // Daylight doesn't follow the road into a tunnel.
+  const col = new Float32Array(verts * 3)
+  for (let i = 0; i < n; i++) col.fill(dim(i), i * section * 3, (i + 1) * section * 3)
   const idx = new Uint32Array((n - 1) * (section - 1) * 6)
   let w = 0
   for (let i = 0; i < n - 1; i++) {
@@ -104,11 +107,40 @@ function buildRoad(buffer: ArrayBuffer, n: number, section: number, texture: THR
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
   geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
   geo.setIndex(new THREE.BufferAttribute(idx, 1))
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide }))
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide, vertexColors: true }))
   // One mesh spans the whole route, so its bounding sphere is useless for culling.
   mesh.frustumCulled = false
   return mesh
+}
+
+/**
+ * Bridges, tunnels and whatever crosses overhead, computed in Rust: `[sunlit vertices,
+ * unlit vertices]`, then sunlit positions, normals and colours; unlit positions and colours.
+ */
+function buildStructures(buffer: ArrayBuffer): THREE.Mesh[] {
+  const [lit, unlit] = new Uint32Array(buffer, 0, 2)
+  let offset = 8
+  const take = (count: number): THREE.BufferAttribute => {
+    const view = new Float32Array(buffer, offset, count * 3)
+    offset += count * 12
+    return new THREE.BufferAttribute(view, 3)
+  }
+  const meshes: THREE.Mesh[] = []
+  if (lit) {
+    const geo = new THREE.BufferGeometry()
+    for (const name of ['position', 'normal', 'color']) geo.setAttribute(name, take(lit))
+    meshes.push(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })))
+  }
+  if (unlit) {
+    const geo = new THREE.BufferGeometry()
+    for (const name of ['position', 'color']) geo.setAttribute(name, take(unlit))
+    meshes.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })))
+  }
+  // Like the road, these span the whole route.
+  for (const mesh of meshes) mesh.frustumCulled = false
+  return meshes
 }
 
 function buildSky(): THREE.Mesh {
@@ -149,6 +181,7 @@ export class World {
   private others = new Map<string, Other>()
   private pos = {} as RoutePos
   private otherPos = {} as RoutePos
+  private camPos = {} as RoutePos
   private camHeading: number | null = null
   private camMode = 0
   private camInit = false
@@ -158,6 +191,8 @@ export class World {
     canvas: HTMLCanvasElement,
     private route: Route,
     private layout: WorldLayout,
+    /** Stretches of the route in a tunnel or under cover, as `[from, to]` in metres. */
+    private covered: [number, number][],
     kmLabel: (km: number) => string,
     markerSpacing: number
   ) {
@@ -180,16 +215,29 @@ export class World {
   /** Fetches the road and the landscape around the start; resolves when the first frame can be drawn. */
   async load(): Promise<void> {
     const start = sampleAt(this.route, 0)
-    const [road] = await Promise.all([api.ride.roadMesh(), this.terrain.prime(start.x, start.z)])
+    const [road, structures] = await Promise.all([api.ride.roadMesh(), api.ride.structures(), this.terrain.prime(start.x, start.z)])
     const texture = roadTexture()
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
-    this.scene.add(buildRoad(road, this.route.n, this.layout.roadSection, texture))
+    const dim = (sample: number): number => 1 - 0.62 * this.cover(sample * this.route.step, 12)
+    this.scene.add(buildRoad(road, this.route.n, this.layout.roadSection, texture, dim), ...buildStructures(structures))
   }
 
   /** Renders a frame and returns it as a PNG data URL (for the automated check). */
   capture(): string {
     this.renderer.render(this.scene, this.camera)
     return this.renderer.domElement.toDataURL('image/png')
+  }
+
+  /** How far under cover a point of the route is: 0 in the open, 1 once `fade` metres inside. */
+  private cover(dist: number, fade: number): number {
+    let deepest = 0
+    for (const [from, to] of this.covered) deepest = Math.max(deepest, Math.min(dist - from, to - dist))
+    return Math.max(0, Math.min(1, deepest / fade))
+  }
+
+  /** True if any of the route between `from` and `to` metres is under cover. */
+  private underCover(from: number, to: number): boolean {
+    return this.covered.some(([a, b]) => from < b && to > a)
   }
 
   private sideOfRoad(dist: number, side: number, height: number, out: THREE.Object3D): RoutePos {
@@ -315,12 +363,12 @@ export class World {
     }
 
     this.terrain.update(p.x, p.z)
-    this.updateCamera(dt, p)
+    this.updateCamera(dt, p, f.distance)
     this.sky.position.copy(this.camera.position)
     this.renderer.render(this.scene, this.camera)
   }
 
-  private updateCamera(dt: number, p: RoutePos): void {
+  private updateCamera(dt: number, p: RoutePos, dist: number): void {
     // Ease the camera's heading so hairpins swing round rather than snap.
     if (this.camHeading === null) this.camHeading = p.heading
     let dh = p.heading - this.camHeading
@@ -328,10 +376,20 @@ export class World {
     this.camHeading += dh * (1 - Math.exp(-dt * 2.2))
     const fx = Math.sin(this.camHeading)
     const fz = Math.cos(this.camHeading)
-    const c = CAMERAS[this.camMode]
-    const tx = p.x - fx * c.back + fz * c.side
-    const tz = p.z - fz * c.back - fx * c.side
+    let c = CAMERAS[this.camMode]
+    let tx = p.x - fx * c.back + fz * c.side
+    let tz = p.z - fz * c.back - fx * c.side
     let ty = p.ele + c.up
+    // In a tunnel there is only one place for the camera: on the road, close behind
+    // the rider. It drops in a little before the mouth and stays until it is out again.
+    const back = Math.max(c.back, CAMERAS[0].back)
+    if (this.underCover(dist - back - 6, dist + 30)) {
+      c = CAMERAS[0]
+      const behind = sampleAt(this.route, Math.max(0, dist - c.back), this.camPos)
+      tx = behind.x
+      tz = behind.z
+      ty = behind.ele + c.up
+    }
     // Never let a hillside swallow the camera.
     ty = Math.max(ty, (this.terrain.heightAt(tx, tz) ?? -Infinity) + 1.4)
     const k = this.camInit ? 1 - Math.exp(-dt * 4) : 1

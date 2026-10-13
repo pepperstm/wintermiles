@@ -53,6 +53,7 @@ export const api = {
     start: (routeId: string) => invoke<RideInit>('ride_start', { routeId }),
     routeData: () => invoke<ArrayBuffer>('ride_route_data'),
     roadMesh: () => invoke<ArrayBuffer>('ride_road_mesh'),
+    structures: () => invoke<ArrayBuffer>('ride_structures'),
     chunk: (cx: number, cz: number) => invoke<ArrayBuffer>('terrain_chunk', { cx, cz }),
     far: (cx: number, cz: number) => invoke<ArrayBuffer>('terrain_far', { cx, cz }),
     togglePause: () => invoke<void>('ride_toggle_pause'),
@@ -74,7 +75,7 @@ export const api = {
     import: () => invoke<HealthSummary | null>('health_import')
   },
   smoke: {
-    config: () => invoke<{ screen: string; ms: number } | null>('smoke_config'),
+    config: () => invoke<{ screen: string; ms: number; camera: number } | null>('smoke_config'),
     done: (png: string | null, info: string) => invoke<void>('smoke_done', { png, info })
   },
   log: (message: string) => invoke<void>('log', { message })

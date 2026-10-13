@@ -44,6 +44,7 @@ export function Home({ onRide }: { onRide: (routeId: string) => void }): React.J
     saveRoutes((routes ?? []).filter((r) => r.id !== route.id))
     void api.kv.del(`route-${route.id}`)
     void api.kv.del(`buildings-${route.id}`)
+    void api.kv.del(`scenery-${route.id}`)
   }
 
   const onDrop = async (e: React.DragEvent): Promise<void> => {

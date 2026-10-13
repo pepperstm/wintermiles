@@ -1,7 +1,7 @@
 // No console window alongside the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod buildings;
+mod mapdata;
 mod commands;
 mod devices;
 mod health;
@@ -90,6 +90,7 @@ fn main() {
             commands::ride_start,
             commands::ride_route_data,
             commands::ride_road_mesh,
+            commands::ride_structures,
             commands::terrain_chunk,
             commands::terrain_far,
             commands::ride_toggle_pause,

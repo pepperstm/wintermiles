@@ -16,12 +16,12 @@ use wintermiles_core::gamify::{apply_ride, RideFacts};
 use wintermiles_core::gpx::{build_route, demo_route, parse_gpx, Climb, Route};
 use wintermiles_core::ride::{ClimbResult, RideEngine, RideInput, Rival};
 use wintermiles_core::types::{PersonalBest, Profile, RideSummary, Settings, TrainerMode};
-use wintermiles_core::world::{align_dem, World, WorldLayout, LAYOUT};
+use wintermiles_core::world::{align_dem, SceneryCounts, World, WorldLayout, LAYOUT};
 
 use crate::devices::sim::DemoRider;
 use crate::devices::Devices;
 use crate::store::Store;
-use crate::{buildings, now_ms, terrain};
+use crate::{mapdata, now_ms, terrain};
 
 pub const DEMO_ROUTE_ID: &str = "demo";
 /// Rides shorter than this many seconds aren't worth a file, a history entry or an upload.
@@ -55,6 +55,10 @@ pub struct RideInit {
     real_terrain: bool,
     /// How many OpenStreetMap buildings were placed along the route.
     buildings: usize,
+    /// What other OpenStreetMap scenery the route has.
+    scenery: SceneryCounts,
+    /// Stretches of the route in a tunnel or under cover, as `[from, to]` in metres.
+    covered: Vec<[f64; 2]>,
     layout: WorldLayout,
     rivals: Vec<Rival>,
     pb_climbs: BTreeMap<usize, f64>,
@@ -120,12 +124,12 @@ impl Session {
         // The demo loop is synthetic, so there is no real place to fetch data for.
         let real_place = route_id != DEMO_ROUTE_ID;
         let want_dem = settings.real_terrain && real_place;
-        let want_buildings = settings.buildings && real_place;
-        if want_dem || want_buildings {
-            let _ = app.emit("ride:loading", "Downloading terrain and buildings for this area…");
+        let (want_buildings, want_scenery) = (settings.buildings && real_place, settings.scenery && real_place);
+        if want_dem || want_buildings || want_scenery {
+            let _ = app.emit("ride:loading", "Downloading terrain and map data for this area…");
         }
-        // Terrain tiles and buildings come from different servers; fetch them side by side.
-        let (dem, footprints) = tokio::join!(
+        // Terrain tiles and map data come from different servers; fetch them side by side.
+        let (dem, map) = tokio::join!(
             async {
                 if want_dem {
                     terrain::load_dem(http, &route).await
@@ -133,13 +137,7 @@ impl Session {
                     None
                 }
             },
-            async {
-                if want_buildings {
-                    buildings::load(http, store, route_id, &route).await
-                } else {
-                    Vec::new()
-                }
-            }
+            mapdata::load(http, store, route_id, &route, want_buildings, want_scenery)
         );
         let dem_offset = dem.as_ref().map_or(0.0, |d| align_dem(&mut route, d));
         let _ = app.emit("ride:loading", "Building the world…");
@@ -147,8 +145,32 @@ impl Session {
         let pb: Option<PersonalBest> = store.get(&format!("pb-{route_id}"));
         let route = Arc::new(route);
         let real_terrain = dem.is_some();
-        let world = Arc::new(World::new(route.clone(), dem, dem_offset).with_buildings(&footprints));
-        let engine = RideEngine::new(route.clone(), &settings, pb.clone());
+        let world = Arc::new(World::with_map(route.clone(), dem, dem_offset, map.scenery.as_ref(), &map.footprints));
+        if std::env::var_os("WM_SMOKE").is_some() {
+            // For the automated check: where along the route the bridges and tunnels are.
+            let kinds = world.field.kinds();
+            let mut from = 0;
+            for i in 1..=kinds.len() {
+                if i == kinds.len() || kinds[i] != kinds[from] {
+                    if kinds[from] != 0 {
+                        eprintln!("{} from {:.0} m to {:.0} m", if kinds[from] == 1 { "Bridge" } else { "Tunnel" }, from as f64 * route.step, (i - 1) as f64 * route.step);
+                    }
+                    from = i;
+                }
+            }
+            eprintln!("Under cover: {:?}", world.scene.covered);
+            for over in &world.scene.overbridges {
+                let mid = over.line[over.line.len() / 2];
+                let nearest = (0..route.n).min_by(|&a, &b| (route.x[a] - mid.0).hypot(route.z[a] - mid.1).total_cmp(&(route.x[b] - mid.0).hypot(route.z[b] - mid.1))).unwrap_or(0);
+                eprintln!("Crossed overhead near {:.0} m by a {:.0} m wide {}", nearest as f64 * route.step, over.width, if over.rail { "railway" } else { "road" });
+            }
+        }
+        let mut engine = RideEngine::new(route.clone(), &settings, pb.clone());
+        // The automated check can start part-way along, to look at a particular spot.
+        if let Some(at) = std::env::var("WM_SMOKE_AT").ok().filter(|_| std::env::var_os("WM_SMOKE").is_some()).and_then(|v| v.parse::<f64>().ok()) {
+            engine.distance = at.clamp(0.0, route.total - 50.0);
+            engine.pos = route.sample_at(engine.distance);
+        }
         let init = RideInit {
             name: route.name.clone(),
             step: route.step,
@@ -157,6 +179,8 @@ impl Session {
             climbs: route.climbs.clone(),
             real_terrain,
             buildings: world.buildings.count(),
+            scenery: world.scene.counts,
+            covered: world.scene.covered.clone(),
             layout: LAYOUT,
             rivals: engine.rivals.clone(),
             pb_climbs: pb.map(|p| p.climbs).unwrap_or_default(),

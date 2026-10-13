@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::height::{hash2, HeightField};
+pub use super::mesh::TriMesh as BuildingMesh;
 use super::CHUNK;
 use crate::gpx::Route;
 
@@ -184,17 +185,6 @@ const PLAIN: [f32; 2] = [0.04, 0.04];
 /// the GPS track and the map disagree, and a wall across the road helps no one.
 const ROAD_CLEARANCE: f64 = 5.5;
 
-/// Triangle soup for a chunk's buildings (three vertices per triangle).
-#[derive(Default)]
-pub struct BuildingMesh {
-    pub positions: Vec<f32>,
-    pub normals: Vec<f32>,
-    pub colors: Vec<f32>,
-    /// Texture coordinates into a repeating one-window tile: on walls, one unit
-    /// per window bay across and per storey down from the eaves.
-    pub uvs: Vec<f32>,
-}
-
 #[derive(Default)]
 pub struct Buildings {
     by_chunk: HashMap<(i32, i32), Vec<Building>>,
@@ -241,13 +231,13 @@ impl Buildings {
             }
             let n = ring.len();
             let centre = (ring.iter().map(|p| p.0).sum::<f64>() / n as f64, ring.iter().map(|p| p.1).sum::<f64>() / n as f64);
-            let ground: Vec<(f64, f64)> = ring.iter().map(|p| field.height(p.0, p.1)).collect();
+            let ground: Vec<(f64, f64)> = ring.iter().map(|p| field.surface(p.0, p.1)).collect();
             // Corners, wall midpoints and the middle must all be clear of the road.
             let mid_clear = (0..n).all(|i| {
                 let (a, b) = (ring[i], ring[(i + 1) % n]);
-                field.height((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0).1 >= ROAD_CLEARANCE
+                field.surface((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0).1 >= ROAD_CLEARANCE
             });
-            if ground.iter().any(|g| g.1 < ROAD_CLEARANCE) || !mid_clear || field.height(centre.0, centre.1).1 < ROAD_CLEARANCE {
+            if ground.iter().any(|g| g.1 < ROAD_CLEARANCE) || !mid_clear || field.surface(centre.0, centre.1).1 < ROAD_CLEARANCE {
                 continue;
             }
             let radius = ring.iter().map(|p| (p.0 - centre.0).hypot(p.1 - centre.1)).fold(0.0, f64::max);
@@ -331,35 +321,5 @@ impl Buildings {
             }
         }
         mesh
-    }
-}
-
-impl BuildingMesh {
-    /// Adds a triangle facing the same way as `facing` (need not be exact or unit length).
-    /// The stored normal is the triangle's true one, so sloped roofs shade correctly.
-    fn triangle(&mut self, mut p: [[f64; 3]; 3], facing: [f64; 3], mut colors: [[f32; 3]; 3], mut uvs: [[f32; 2]; 3]) {
-        let normal_of = |p: &[[f64; 3]; 3]| {
-            let (u, v) = ([p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]);
-            [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
-        };
-        let mut n = normal_of(&p);
-        // Wind every triangle anticlockwise as seen from outside, which is what the renderer treats as its front.
-        if n[0] * facing[0] + n[1] * facing[1] + n[2] * facing[2] < 0.0 {
-            p.swap(1, 2);
-            colors.swap(1, 2);
-            uvs.swap(1, 2);
-            n = normal_of(&p);
-        }
-        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-        // Three points in a line (possible when triangulating an outline with redundant points) cover nothing.
-        if len < 1e-6 {
-            return;
-        }
-        for k in 0..3 {
-            self.positions.extend(p[k].map(|v| v as f32));
-            self.normals.extend(n.map(|v| (v / len) as f32));
-            self.colors.extend(colors[k]);
-            self.uvs.extend(uvs[k]);
-        }
     }
 }

@@ -70,15 +70,18 @@ interface GridReply {
   trees: Float32Array
   /** Building triangles: positions, normals and colours (three floats per vertex), then UVs (two). */
   buildings: [Float32Array, Float32Array, Float32Array, Float32Array] | null
+  /** Water triangles: positions and colours. */
+  water: [Float32Array, Float32Array] | null
 }
 
 /**
- * Splits a mesh reply: `[ground vertices, trees, building vertices]`, then ground
- * positions, normals and colours; trees; building positions, normals, colours and UVs.
+ * Splits a mesh reply: `[ground vertices, trees, building vertices, water vertices]`,
+ * then ground positions, normals and colours; trees; building positions, normals,
+ * colours and UVs; water positions and colours.
  */
 function decodeGrid(buffer: ArrayBuffer): GridReply {
-  const [verts, trees, walls] = new Uint32Array(buffer, 0, 3)
-  let offset = 12
+  const [verts, trees, walls, water] = new Uint32Array(buffer, 0, 4)
+  let offset = 16
   const take = (length: number): Float32Array => {
     const view = new Float32Array(buffer, offset, length)
     offset += length * 4
@@ -89,7 +92,8 @@ function decodeGrid(buffer: ArrayBuffer): GridReply {
     normals: take(verts * 3),
     colors: take(verts * 3),
     trees: take(trees * 6),
-    buildings: walls ? [take(walls * 3), take(walls * 3), take(walls * 3), take(walls * 2)] : null
+    buildings: walls ? [take(walls * 3), take(walls * 3), take(walls * 3), take(walls * 2)] : null,
+    water: water ? [take(water * 3), take(water * 3)] : null
   }
 }
 
@@ -97,6 +101,7 @@ interface Chunk {
   mesh: THREE.Mesh
   trees: THREE.InstancedMesh | null
   buildings: THREE.Mesh | null
+  water: THREE.Mesh | null
   /** Vertex positions, kept for ground-height lookups. */
   positions: Float32Array
 }
@@ -112,6 +117,8 @@ export class Terrain {
   private treeGeometry = buildTreeGeometry()
   private treeMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })
   private buildingMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, map: windowTexture() })
+  // Slightly see-through, with a sheen where the sun catches it.
+  private waterMaterial = new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.86, shininess: 90, specular: 0x8899aa })
   private far: THREE.Mesh
   private farAt = ''
   private farBusy = false
@@ -216,7 +223,20 @@ export class Terrain {
         buildings = new THREE.Mesh(walls, this.buildingMaterial)
         this.group.add(buildings)
       }
-      this.chunks.set(k, { mesh, trees, buildings, positions: data.positions })
+      let water: THREE.Mesh | null = null
+      if (data.water) {
+        const surface = new THREE.BufferGeometry()
+        surface.setAttribute('position', new THREE.BufferAttribute(data.water[0], 3))
+        surface.setAttribute('color', new THREE.BufferAttribute(data.water[1], 3))
+        // Still water is as good as level; one upward normal serves every vertex.
+        const up = new Float32Array(data.water[0].length)
+        for (let i = 1; i < up.length; i += 3) up[i] = 1
+        surface.setAttribute('normal', new THREE.BufferAttribute(up, 3))
+        surface.computeBoundingSphere()
+        water = new THREE.Mesh(surface, this.waterMaterial)
+        this.group.add(water)
+      }
+      this.chunks.set(k, { mesh, trees, buildings, water, positions: data.positions })
     } catch (err) {
       if (!this.disposed) void api.log(`terrain chunk ${k} failed: ${err}`)
     } finally {
@@ -277,6 +297,10 @@ export class Terrain {
       this.group.remove(c.buildings)
       c.buildings.geometry.dispose()
     }
+    if (c.water) {
+      this.group.remove(c.water)
+      c.water.geometry.dispose()
+    }
   }
 
   dispose(): void {
@@ -289,5 +313,6 @@ export class Terrain {
     this.treeMaterial.dispose()
     this.buildingMaterial.map?.dispose()
     this.buildingMaterial.dispose()
+    this.waterMaterial.dispose()
   }
 }

@@ -311,6 +311,12 @@ export function SettingsScreen(): React.JSX.Element {
           onChange={(v) => update((s) => ({ ...s, buildings: v }))}
         />
         <Toggle
+          label="Forests, water, bridges and tunnels from OpenStreetMap"
+          hint="Downloads the map of each route's surroundings once: woods are planted where they really are, lakes and rivers are filled, and the road is carried over bridges and through tunnels where the real one is."
+          value={settings.scenery}
+          onChange={(v) => update((s) => ({ ...s, scenery: v }))}
+        />
+        <Toggle
           label="Pace riders"
           hint="Computer riders holding a steady power to chase or drop."
           value={settings.bots.enabled}
