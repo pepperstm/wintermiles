@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod mapdata;
+mod photos;
 mod commands;
 mod devices;
+mod geo;
 mod group;
 mod health;
 mod library;
@@ -115,6 +117,12 @@ fn main() {
             commands::group_fetch_route,
             commands::smart_set_token,
             commands::smart_test,
+            commands::geo_search,
+            commands::geo_plan,
+            commands::geo_classics,
+            commands::weather_now,
+            commands::ride_photos,
+            commands::photo_image,
             commands::ride_finish,
             commands::ride_abort,
             commands::strava_status,

@@ -95,8 +95,19 @@ export const api = {
     list: (routeId: string) => invoke<Segment[]>('segments_list', { routeId }),
     fetch: (routeId: string) => invoke<Segment[]>('segments_fetch', { routeId })
   },
+  photos: {
+    forRide: () => invoke<{ distance: number; id: string; url: string; capturedAt: number }[]>('ride_photos'),
+    image: (url: string) => invoke<string>('photo_image', { url })
+  },
+  weatherNow: (lat: number, lon: number) => invoke<number>('weather_now', { lat, lon }),
   stravaActivities: () => invoke<StravaActivity[]>('strava_activities'),
   fitness: () => invoke<FitnessOverview>('fitness_overview'),
+  geo: {
+    search: (query: string) => invoke<{ name: string; detail: string; lat: number; lon: number }[]>('geo_search', { query }),
+    plan: (points: [number, number][], profile: string) =>
+      invoke<{ gpx: string; distance: number; ascent: number; climbs: number; line: [number, number][]; profile: [number, number][] }>('geo_plan', { points, profile }),
+    classics: () => invoke<{ name: string; region: string; points: [number, number][] }[]>('geo_classics')
+  },
   group: {
     fetchRoute: (room: string) => invoke<RouteMeta>('group_fetch_route', { room })
   },

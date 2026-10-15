@@ -18,7 +18,7 @@ use crate::devices::DevicesSnapshot;
 use crate::library::{self, GhostMeta, WorkoutMeta};
 use crate::session::{load_route, local_day, RideInit, RideRequest, Session, DEMO_ROUTE_ID};
 use crate::strava::{self, StravaStatus};
-use crate::{group, health, now_ms, secrets, smart, AppState};
+use crate::{geo, group, health, now_ms, photos, secrets, smart, AppState};
 use wintermiles_core::fitness::{estimate_ftp, training_load, FtpEstimate, LoadDay, CURVE_DURATIONS};
 use wintermiles_core::gamify::{streaks, Streaks};
 use wintermiles_core::segments::{decode_polyline, place_segment, Segment, SegmentSource};
@@ -557,6 +557,68 @@ pub async fn group_fetch_route(state: State<'_, AppState>, room: String) -> Res<
     }
     // The routes page adds it to the list it keeps.
     import_gpx(&state, &name, &gpx)
+}
+
+// ── Route planning ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn geo_search(state: State<'_, AppState>, query: String) -> Res<Vec<geo::Place>> {
+    geo::search(&state.http, query.trim()).await
+}
+
+/// A planned route, ready to preview: its GPX and the numbers the library would show.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Planned {
+    gpx: String,
+    distance: f64,
+    ascent: f64,
+    climbs: usize,
+    /// `[lat, lon]` outline and `[distance, elevation]` profile, thinned for drawing.
+    line: Vec<[f64; 2]>,
+    profile: Vec<[f64; 2]>,
+}
+
+#[tauri::command]
+pub async fn geo_plan(state: State<'_, AppState>, points: Vec<[f64; 2]>, profile: String) -> Res<Planned> {
+    let gpx = geo::plan(&state.http, &points, &profile).await?;
+    let route = build_route("Planned", &parse_gpx(&gpx)?.1)?;
+    let stride = (route.n / 600).max(1);
+    Ok(Planned {
+        distance: route.total,
+        ascent: route.ascent,
+        climbs: route.climbs.len(),
+        line: route.preview_outline(1500),
+        profile: (0..route.n).step_by(stride).map(|i| [i as f64 * route.step, route.ele[i] as f64]).collect(),
+        gpx,
+    })
+}
+
+/// Street-level photos along the route being ridden.
+#[tauri::command]
+pub async fn ride_photos(state: State<'_, AppState>) -> Res<Vec<wintermiles_core::segments::Photo>> {
+    let session = state.current_session()?;
+    let token = state.store.get::<Settings>("settings").unwrap_or_default().look.mapillary_token;
+    photos::along(&state.http, &state.store, &session.route_id, &session.world.route, &token).await
+}
+
+#[tauri::command]
+pub async fn photo_image(state: State<'_, AppState>, url: String) -> Res<String> {
+    photos::image(&state.http, &url).await
+}
+
+/// The WMO weather code at a place right now, from Open-Meteo.
+#[tauri::command]
+pub async fn weather_now(state: State<'_, AppState>, lat: f64, lon: f64) -> Res<u32> {
+    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={lat:.4}&longitude={lon:.4}&current=weather_code");
+    let res = state.http.get(url).timeout(std::time::Duration::from_secs(8)).send().await.map_err(|e| format!("Could not reach the weather service: {e}"))?;
+    let json: Value = res.json().await.map_err(|e| e.to_string())?;
+    json["current"]["weather_code"].as_u64().map(|c| c as u32).ok_or_else(|| "The weather service gave no reading.".into())
+}
+
+#[tauri::command]
+pub fn geo_classics() -> &'static [geo::Classic] {
+    geo::CLASSICS
 }
 
 // ── Fan and lights ─────────────────────────────────────────────────────────

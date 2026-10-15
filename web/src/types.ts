@@ -298,6 +298,15 @@ export interface RideInit {
   centre: [number, number]
   /** Local hour when the ride started. */
   hour: number
+  landmarks: Landmark[]
+}
+
+export interface Landmark {
+  distance: number
+  side: number
+  kind: string
+  name: string
+  detail: string
 }
 
 export interface ClimbResult {

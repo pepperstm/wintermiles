@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import { api } from '../bridge'
 import { sampleAt, type Route, type RoutePos } from '../core/gpx'
-import type { WorldLayout } from '../types'
+import type { Landmark, WorldLayout } from '../types'
 import { RiderModel } from './rider'
 import { Terrain } from './terrain'
+import { look, Precipitation, type Look } from './weather'
 
 export interface WorldRival {
   id: string
@@ -32,7 +33,7 @@ const CAMERAS = [
   { back: 38, up: 62, side: 0, lookAhead: 22, lookUp: 0 }
 ]
 
-function textSprite(text: string, background: string, color = '#ffffff'): THREE.Sprite {
+function textSprite(text: string, background: string, color = '#ffffff', border?: string): THREE.Sprite {
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
   const font = '600 44px system-ui, sans-serif'
@@ -45,6 +46,13 @@ function textSprite(text: string, background: string, color = '#ffffff'): THREE.
   ctx.beginPath()
   ctx.roundRect(0, 0, w, 72, 18)
   ctx.fill()
+  if (border) {
+    ctx.strokeStyle = border
+    ctx.lineWidth = 8
+    ctx.beginPath()
+    ctx.roundRect(4, 4, w - 8, 64, 14)
+    ctx.stroke()
+  }
   ctx.fillStyle = color
   ctx.textBaseline = 'middle'
   ctx.fillText(text, 24, 38)
@@ -53,6 +61,21 @@ function textSprite(text: string, background: string, color = '#ffffff'): THREE.
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }))
   sprite.userData.aspect = w / 72
   return sprite
+}
+
+const POI_ICON: Record<string, string> = {
+  cafe: '☕',
+  restaurant: '🍴',
+  pub: '🍺',
+  water: '💧',
+  bike_shop: '🔧',
+  viewpoint: '👁',
+  church: '⛪',
+  castle: '🏰',
+  monument: '🗿',
+  museum: '🏛',
+  hut: '🛖',
+  attraction: '★'
 }
 
 function roadTexture(): THREE.CanvasTexture {
@@ -178,6 +201,10 @@ export class World {
   private scene = new THREE.Scene()
   private camera = new THREE.PerspectiveCamera(58, 1, 0.5, 20000)
   private sky = buildSky()
+  private hemi = new THREE.HemisphereLight(0xe6f1ff, 0x6b7a4f, 2.0)
+  private sun = new THREE.DirectionalLight(0xfff1d6, 2.4)
+  private lamp = new THREE.PointLight(0xfff4e0, 0, 32, 1.6)
+  private precipitation: Precipitation | null = null
   private terrain: Terrain
   private rider = new RiderModel(0xff5a36)
   private others = new Map<string, Other>()
@@ -196,17 +223,17 @@ export class World {
     /** Stretches of the route in a tunnel or under cover, as `[from, to]` in metres. */
     private covered: [number, number][],
     kmLabel: (km: number) => string,
-    markerSpacing: number
+    markerSpacing: number,
+    private landmarks: Landmark[] = []
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     // Long-range haze: nearby hills stay crisp, far ranges fade into the sky.
     this.scene.fog = new THREE.Fog(HORIZON, 300, 8500)
     this.scene.add(this.sky)
-    this.scene.add(new THREE.HemisphereLight(0xe6f1ff, 0x6b7a4f, 2.0))
-    const sun = new THREE.DirectionalLight(0xfff1d6, 2.4)
-    sun.position.set(0.5, 1, 0.35)
-    this.scene.add(sun)
+    this.scene.add(this.hemi)
+    this.sun.position.set(0.5, 1, 0.35)
+    this.scene.add(this.sun, this.lamp)
 
     this.terrain = new Terrain(layout)
     this.scene.add(this.terrain.group)
@@ -222,6 +249,33 @@ export class World {
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
     const dim = (sample: number): number => 1 - 0.62 * this.cover(sample * this.route.step, 12)
     this.scene.add(buildRoad(road, this.route.n, this.layout.roadSection, texture, dim), ...buildStructures(structures))
+  }
+
+  /** Sets the time of day and weather. */
+  setLook(l: Look): void {
+    const sky = this.sky.material as THREE.ShaderMaterial
+    sky.uniforms.top.value.copy(l.zenith)
+    sky.uniforms.bottom.value.copy(l.horizon)
+    const fog = this.scene.fog as THREE.Fog
+    fog.color.copy(l.fog.color)
+    fog.near = l.fog.near
+    fog.far = l.fog.far
+    this.hemi.color.copy(l.hemi.sky)
+    this.hemi.groundColor.copy(l.hemi.ground)
+    this.hemi.intensity = l.hemi.intensity
+    this.sun.color.copy(l.sun.color)
+    this.sun.intensity = l.sun.intensity
+    this.sun.position.copy(l.sun.dir)
+    this.lamp.intensity = l.lamp * 14
+    if (this.precipitation) {
+      this.scene.remove(this.precipitation.object)
+      this.precipitation.dispose()
+      this.precipitation = null
+    }
+    if (l.precipitation !== 'none') {
+      this.precipitation = new Precipitation(l.precipitation)
+      this.scene.add(this.precipitation.object)
+    }
   }
 
   /** Renders a frame and returns it as a PNG data URL (for the automated check). */
@@ -279,14 +333,43 @@ export class World {
       )
       this.sideOfRoad(c.start, -this.layout.roadWidth / 2 - 2, 3.4, foot)
       foot.scale.set(1.3 * foot.userData.aspect, 1.3, 1)
-      const top = textSprite(`Summit · ${Math.round(route.ele[Math.round(c.end / route.step)])} m`, 'rgba(40,150,90,0.92)')
+      const named = this.landmarks.find((m) => m.kind === 'summit' && Math.abs(m.distance - c.end) < 1)
+      const top = textSprite(`${named && !named.name.startsWith('Climb ') ? named.name : 'Summit'} · ${Math.round(route.ele[Math.round(c.end / route.step)])} m`, 'rgba(40,150,90,0.92)')
       this.sideOfRoad(c.end, -this.layout.roadWidth / 2 - 2, 3.4, top)
       top.scale.set(1.3 * top.userData.aspect, 1.3, 1)
       this.scene.add(foot, top)
     })
 
+    this.addLandmarks()
     this.addArch(Math.min(12, route.total), 0x2f7fd8, 'START')
     this.addArch(route.total - 4, 0xd8382f, 'FINISH')
+  }
+
+  /** Place-name signs on posts where the road enters a village or town, and roadside points of interest. */
+  private addLandmarks(): void {
+    const posts: THREE.Matrix4[] = []
+    const holder = new THREE.Object3D()
+    for (const m of this.landmarks) {
+      if (m.kind === 'summit') continue
+      const place = ['city', 'town', 'village', 'hamlet', 'suburb', 'locality'].includes(m.kind)
+      const off = (this.layout.roadWidth / 2 + (place ? 2.2 : 3.2)) * m.side
+      const sign = place ? textSprite(m.name, '#ffffff', '#1a1a1a', '#d42020') : textSprite(`${POI_ICON[m.kind] ?? '•'} ${m.name}`, 'rgba(30,70,140,0.9)')
+      const height = place ? 2.3 : 2.0
+      this.sideOfRoad(m.distance, off, height, sign)
+      const size = place ? (m.kind === 'city' || m.kind === 'town' ? 1.5 : 1.2) : 1.0
+      sign.scale.set(size * sign.userData.aspect, size, 1)
+      this.scene.add(sign)
+      this.sideOfRoad(m.distance, off, (height - size / 2) / 2, holder)
+      holder.scale.set(1, height - size / 2, 1)
+      holder.updateMatrix()
+      posts.push(holder.matrix.clone())
+    }
+    if (!posts.length) return
+    const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 6), new THREE.MeshLambertMaterial({ color: 0x9aa0a6 }), posts.length)
+    posts.forEach((m, i) => mesh.setMatrixAt(i, m))
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.frustumCulled = false
+    this.scene.add(mesh)
   }
 
   private addArch(dist: number, color: number, text: string): void {
@@ -367,6 +450,9 @@ export class World {
     this.terrain.update(p.x, p.z)
     this.updateCamera(dt, p, f.distance)
     this.sky.position.copy(this.camera.position)
+    // The rider's lamp, just ahead and above, lights the road at night.
+    this.lamp.position.set(p.x + Math.sin(p.heading) * 6, p.ele + 3, p.z + Math.cos(p.heading) * 6)
+    this.precipitation?.update(dt, this.camera.position, f.speed, p.heading)
     this.renderer.render(this.scene, this.camera)
   }
 
@@ -408,6 +494,7 @@ export class World {
   dispose(): void {
     this.terrain.dispose()
     this.rider.dispose()
+    this.precipitation?.dispose()
     for (const other of this.others.values()) other.model.dispose()
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh

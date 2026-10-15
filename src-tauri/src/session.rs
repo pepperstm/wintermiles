@@ -19,7 +19,7 @@ use wintermiles_core::ride::{ClimbResult, RideEngine, RideInput, RideOptions, Ri
 use wintermiles_core::segments::{Segment, SegmentSource};
 use wintermiles_core::workout::{Workout, WorkoutPos};
 use wintermiles_core::types::{PersonalBest, Profile, RideSummary, Settings, TrainerMode};
-use wintermiles_core::world::{align_dem_with, route_structures, SceneryCounts, World, WorldLayout, LAYOUT};
+use wintermiles_core::world::{align_dem_with, landmarks, route_structures, Landmark, SceneryCounts, World, WorldLayout, LAYOUT};
 
 use crate::devices::sim::DemoRider;
 use crate::devices::Devices;
@@ -92,6 +92,7 @@ pub struct RideInit {
     centre: [f64; 2],
     /// Local hour when the ride started (for "real time of day").
     hour: f64,
+    landmarks: Vec<Landmark>,
 }
 
 #[derive(Serialize)]
@@ -281,7 +282,13 @@ impl Session {
             segments,
             centre: { let m = route.sample_at(route.total / 2.0); [m.lat, m.lon] },
             hour: { use chrono::Timelike; let t = Local::now(); t.hour() as f64 + t.minute() as f64 / 60.0 },
+            landmarks: if settings.look.landmarks { landmarks(&route, map.scenery.as_ref()) } else { Vec::new() },
         };
+        if std::env::var_os("WM_SMOKE").is_some() {
+            for m in &init.landmarks {
+                eprintln!("Landmark at {:.0} m ({}): {} {} {}", m.distance, if m.side > 0.0 { "+" } else { "-" }, m.kind, m.name, m.detail);
+            }
+        }
         let group = req.group_room.as_ref().filter(|r| !r.trim().is_empty()).map(|room| GroupLink::join(app.clone(), &settings.group.relay_url, room.trim(), &settings.rider.name, route_id, store));
         devices.command_trainer(TrainerCommand::UserConfig { rider_kg: settings.rider.weight_kg, bike_kg: settings.rider.bike_kg });
 

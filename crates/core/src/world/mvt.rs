@@ -13,6 +13,7 @@ use crate::gpx::Route;
 
 /// The zoom level at which the tiles include every building.
 pub const MAP_ZOOM: u32 = 14;
+const POINT: u64 = 1;
 const LINE: u64 = 2;
 const POLYGON: u64 = 3;
 
@@ -128,6 +129,38 @@ pub struct MapTile {
     pub waterways: Vec<Waterway>,
     pub crossings: Vec<Crossing>,
     pub roads: Vec<Road>,
+    pub labels: Vec<Label>,
+}
+
+/// A named place or point of interest.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Label {
+    /// "city", "town", "village", "hamlet", "suburb", "locality", or a point of interest:
+    /// "cafe", "restaurant", "pub", "water", "bike_shop", "viewpoint", "church", "castle",
+    /// "monument", "museum", "hut", "attraction".
+    pub kind: String,
+    pub name: String,
+    /// `[lat, lon]`.
+    pub at: [f64; 2],
+}
+
+/// The kind of point of interest a `pois` feature is, if it is one worth showing.
+fn poi_kind(amenity: &str, tourism: &str, shop: &str, historic: &str) -> Option<&'static str> {
+    Some(match (amenity, tourism, shop, historic) {
+        ("cafe" | "ice_cream", ..) => "cafe",
+        ("restaurant" | "fast_food", ..) => "restaurant",
+        ("pub" | "bar" | "biergarten", ..) => "pub",
+        ("drinking_water" | "water_point" | "fountain", ..) => "water",
+        ("place_of_worship", ..) => "church",
+        (_, "viewpoint", ..) => "viewpoint",
+        (_, "museum", ..) => "museum",
+        (_, "alpine_hut" | "wilderness_hut", ..) => "hut",
+        (_, "attraction", ..) => "attraction",
+        (_, _, "bicycle", _) => "bike_shop",
+        (.., "castle" | "fort" | "ruins") => "castle",
+        (.., "monument" | "memorial") => "monument",
+        _ => return None,
+    })
 }
 
 /// An attribute value. Numbers are of no interest here.
@@ -318,7 +351,7 @@ pub fn parse_tile(bytes: &[u8], zoom: u32, tx: u32, ty: u32) -> Option<MapTile> 
             continue;
         }
         let layer = Layer::read(tile.bytes()?)?;
-        if !matches!(layer.name, "buildings" | "land" | "water_polygons" | "water_lines" | "streets") {
+        if !matches!(layer.name, "buildings" | "land" | "water_polygons" | "water_lines" | "streets" | "place_labels" | "pois") {
             continue;
         }
         let extent = layer.extent;
@@ -388,6 +421,31 @@ pub fn parse_tile(bytes: &[u8], zoom: u32, tx: u32, ty: u32) -> Option<MapTile> 
                             found.waterways.push(Waterway { kind, line: thin(&piece, 2.0 / unit_m).into_iter().map(to_lat_lon).collect() });
                         }
                     }
+                }
+                ("place_labels" | "pois", POINT) => {
+                    let name = layer.text(f, "name").trim();
+                    let kind = if layer.name == "place_labels" {
+                        match layer.text(f, "kind") {
+                            k @ ("city" | "town" | "village" | "hamlet" | "suburb" | "locality") => k,
+                            _ => continue,
+                        }
+                    } else {
+                        match poi_kind(layer.text(f, "amenity"), layer.text(f, "tourism"), layer.text(f, "shop"), layer.text(f, "historic")) {
+                            Some(k) => k,
+                            None => continue,
+                        }
+                    };
+                    // Drinking water is worth showing unnamed; anything else needs a name to say.
+                    if name.is_empty() && kind != "water" {
+                        continue;
+                    }
+                    let Some(&p) = rings(f.geometry)?.first().and_then(|r| r.first()) else { continue };
+                    let p = (p.0 as f64, p.1 as f64);
+                    // Labels near an edge appear in the neighbouring tile too; keep the one that holds it.
+                    if !(0.0..extent).contains(&p.0) || !(0.0..extent).contains(&p.1) {
+                        continue;
+                    }
+                    found.labels.push(Label { kind: kind.into(), name: name.chars().take(48).collect(), at: to_lat_lon(p) });
                 }
                 ("streets", LINE) => {
                     let Some(kind) = road_kind(layer.text(f, "kind"), layer.flag(f, "link"), layer.flag(f, "rail")) else { continue };

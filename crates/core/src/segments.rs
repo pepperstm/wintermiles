@@ -212,3 +212,44 @@ pub fn ghost_trace(route: &Route, track: &[(f64, f64, f64)]) -> Option<Vec<f64>>
     }
     Some(out)
 }
+
+/// A street-level photo taken along the route.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Photo {
+    /// Metres along the route.
+    pub distance: f64,
+    pub id: String,
+    pub url: String,
+    /// When it was taken, in Unix milliseconds.
+    pub captured_at: u64,
+}
+
+/// One candidate photo: `(id, lat, lon, compass bearing in degrees, url, captured_at)`.
+pub type PhotoCandidate = (String, f64, f64, f64, String, u64);
+
+/// Keeps the photos taken on the route and looking along it in the riding direction,
+/// at most one every `spacing` metres (the newest wins).
+pub fn pick_photos(route: &Route, candidates: &[PhotoCandidate], spacing: f64) -> Vec<Photo> {
+    let mut best: std::collections::BTreeMap<i64, Photo> = std::collections::BTreeMap::new();
+    for (id, lat, lon, bearing, url, captured_at) in candidates {
+        let (x, z) = route.to_local(*lat, *lon);
+        let Some((d, off)) = nearest(route, x, z, 0, route.n) else { continue };
+        if off > 12.0 {
+            continue;
+        }
+        // The road's compass bearing here (x east, z south).
+        let i = ((d / route.step) as usize).min(route.n.saturating_sub(2));
+        let road = (route.x[i + 1] - route.x[i]).atan2(-(route.z[i + 1] - route.z[i])).to_degrees();
+        let diff = ((bearing - road + 540.0).rem_euclid(360.0) - 180.0).abs();
+        if diff > 50.0 {
+            continue;
+        }
+        let slot = (d / spacing).floor() as i64;
+        let photo = Photo { distance: d, id: id.clone(), url: url.clone(), captured_at: *captured_at };
+        if best.get(&slot).is_none_or(|p| p.captured_at < *captured_at) {
+            best.insert(slot, photo);
+        }
+    }
+    best.into_values().collect()
+}

@@ -143,6 +143,9 @@ pub struct Scenery {
     /// Everything else in the road and rail network: the parts that simply lie on the ground.
     #[serde(default)]
     pub roads: Vec<Road>,
+    /// Place names and points of interest.
+    #[serde(default)]
+    pub labels: Vec<super::mvt::Label>,
 }
 
 impl Scenery {
@@ -153,6 +156,7 @@ impl Scenery {
         self.waterways.append(&mut tile.waterways);
         self.crossings.append(&mut tile.crossings);
         self.roads.append(&mut tile.roads);
+        self.labels.append(&mut tile.labels);
     }
 }
 

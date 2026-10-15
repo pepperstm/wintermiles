@@ -153,3 +153,57 @@ async fn apply(http: &reqwest::Client, c: &SmartHome, token: &str, w: Wanted, sp
         _ => Ok(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn fan_levels() {
+        assert_eq!(fan_level(5.0, 10.0, 35.0), 0);
+        assert_eq!(fan_level(10.0, 10.0, 35.0), 25);
+        assert_eq!(fan_level(20.0, 10.0, 35.0), 75);
+        assert_eq!(fan_level(35.0, 10.0, 35.0), 100);
+        assert_eq!(fan_level(60.0, 10.0, 35.0), 100);
+    }
+
+    /// A pretend device that records the paths it is asked for.
+    async fn device() -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let line = req.lines().next().unwrap_or("").to_string();
+                let body = req.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+                log.lock().unwrap().push(format!("{line} {body}"));
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
+            }
+        });
+        (format!("127.0.0.1:{}", addr.port()), seen)
+    }
+
+    #[tokio::test]
+    async fn drives_a_webhook_and_home_assistant() {
+        let (addr, seen) = device().await;
+        let http = reqwest::Client::new();
+        let hook = SmartHome { kind: "webhook".into(), url: format!("http://{addr}/fan?level={{level}}&zone={{zone}}&p={{power}}"), ..Default::default() };
+        apply(&http, &hook, "", Wanted { fan: 75, zone: 4 }, 25.0, 210.0, None).await.unwrap();
+        let ha = SmartHome { kind: "homeassistant".into(), url: format!("http://{addr}"), fan_entity: "fan.desk".into(), light_entity: "light.room".into(), ..Default::default() };
+        apply(&http, &ha, "token", Wanted { fan: 50, zone: 6 }, 25.0, 300.0, None).await.unwrap();
+        let shelly = SmartHome { kind: "shelly".into(), url: addr.clone(), ..Default::default() };
+        apply(&http, &shelly, "", Wanted { fan: 0, zone: 0 }, 0.0, 0.0, None).await.unwrap();
+        let log = seen.lock().unwrap().clone();
+        assert!(log[0].starts_with("GET /fan?level=75&zone=4&p=210 "), "{log:?}");
+        assert!(log[1].starts_with("POST /api/services/fan/set_percentage") && log[1].contains("\"percentage\":50"), "{log:?}");
+        assert!(log[2].starts_with("POST /api/services/light/turn_on") && log[2].contains("[255,90,74]"), "{log:?}");
+        assert!(log[3].starts_with("GET /rpc/Switch.Set?id=0&on=false"), "{log:?}");
+    }
+}

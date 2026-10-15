@@ -3,6 +3,7 @@ import { levelFor } from './core/fmt'
 import { api, mergeSettings, refreshDevices, SettingsContext, smokeHooks, useDevices } from './state'
 import { EMPTY_PROFILE, type Profile, type RideRequest, type RideSummary, type RouteMeta, type Settings } from './types'
 import { Devices } from './ui/Devices'
+import { Explore } from './ui/Explore'
 import { History } from './ui/History'
 import { Home } from './ui/Home'
 import { Ride } from './ui/Ride'
@@ -11,12 +12,13 @@ import { Summary } from './ui/Summary'
 import { Workouts } from './ui/Workouts'
 
 type Screen =
-  | { name: 'home' | 'workouts' | 'devices' | 'history' | 'settings' }
+  | { name: 'home' | 'explore' | 'workouts' | 'devices' | 'history' | 'settings' }
   | { name: 'ride'; request: RideRequest }
   | { name: 'summary'; ride: RideSummary }
 
 const TABS = [
   { name: 'home', label: 'Routes' },
+  { name: 'explore', label: 'Find a route' },
   { name: 'workouts', label: 'Workouts' },
   { name: 'devices', label: 'Devices' },
   { name: 'history', label: 'Progress' },
@@ -32,7 +34,7 @@ async function runSmoke(setScreen: (s: Screen) => void): Promise<void> {
     const routes = await api.kv.get<RouteMeta[]>('routes')
     await api.devices.demoAdd()
     setScreen({ name: 'ride', request: { routeId: routes?.[0]?.id ?? 'demo', workoutId: smoke.workout, groupRoom: smoke.room, ghostIds: smoke.ghosts ?? [] } })
-  } else if (smoke.screen === 'devices' || smoke.screen === 'history' || smoke.screen === 'settings' || smoke.screen === 'workouts' || smoke.screen === 'home') {
+  } else if (smoke.screen === 'devices' || smoke.screen === 'history' || smoke.screen === 'settings' || smoke.screen === 'workouts' || smoke.screen === 'home' || smoke.screen === 'explore') {
     if (smoke.screen === 'devices') await api.devices.demoAdd()
     setScreen({ name: smoke.screen })
   }
@@ -119,6 +121,7 @@ export function App(): React.JSX.Element | null {
         <main className="page">
           {screen.name === 'home' && <Home onRide={(request) => setScreen({ name: 'ride', request })} />}
           {screen.name === 'workouts' && <Workouts />}
+          {screen.name === 'explore' && <Explore onSaved={() => undefined} />}
           {screen.name === 'devices' && <Devices />}
           {screen.name === 'history' && <History profile={profile} />}
           {screen.name === 'settings' && <SettingsScreen />}

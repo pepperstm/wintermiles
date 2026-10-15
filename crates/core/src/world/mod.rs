@@ -5,6 +5,7 @@
 mod buildings;
 mod dem;
 mod height;
+mod landmarks;
 mod mesh;
 mod mvt;
 mod roads;
@@ -15,7 +16,8 @@ pub use buildings::{overpass_query, parse_overpass, BuildingMesh, Buildings, Foo
 pub use dem::{align_dem, align_dem_with, Dem, TILE};
 pub use height::{HeightField, Probe, BRIDGE, OPEN, TUNNEL};
 pub use mesh::TriMesh;
-pub use mvt::{corridor_tiles, parse_building_tile, parse_tile, route_corridor, MapTile, MAP_ZOOM};
+pub use landmarks::{landmarks, Landmark};
+pub use mvt::{corridor_tiles, parse_building_tile, parse_tile, route_corridor, Label, MapTile, MAP_ZOOM};
 pub use scenery::{route_structures, Area, AreaKind, Crossing, Deck, Overbridge, Road, RoadKind, Scene, Scenery, SceneryCounts, Waterway, WaterwayKind};
 pub use structures::Structures;
 

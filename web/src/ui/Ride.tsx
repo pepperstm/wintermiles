@@ -6,7 +6,9 @@ import { api, smokeHooks, useSettings } from '../state'
 import type { RideInit, RideRequest, RideState, RideSummary } from '../types'
 import { WorkoutShape } from './Workouts'
 import { World } from '../world/scene'
+import { look, timeFromHour, weatherFromCode } from '../world/weather'
 import { MiniMap } from './MiniMap'
+import { StreetPhoto } from './StreetPhoto'
 import { ProfileChart } from './ProfileChart'
 
 interface Props {
@@ -100,10 +102,18 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
         }
         const canvas = canvasRef.current!
         const imperial = settingsRef.current.units === 'imperial'
-        const world = new World(canvas, loaded, started.layout, started.covered, (i) => `${i} ${imperial ? 'mi' : 'km'}`, imperial ? 1609.344 : 1000)
+        const world = new World(canvas, loaded, started.layout, started.covered, (i) => `${i} ${imperial ? 'mi' : 'km'}`, imperial ? 1609.344 : 1000, started.landmarks)
         worldRef.current = world
         await world.load()
         if (disposed) return
+        const lookCfg = settingsRef.current.look
+        const time = lookCfg.timeOfDay === 'clock' ? timeFromHour(started.hour) : lookCfg.timeOfDay
+        let weather = lookCfg.weather === 'live' ? 'clear' : lookCfg.weather
+        if (lookCfg.weather === 'live') {
+          // The weather there right now; if it can't be had, a clear day.
+          weather = await api.weatherNow(started.centre[0], started.centre[1]).then(weatherFromCode, () => 'clear' as const)
+        }
+        world.setLook(look(time, weather))
         observer = new ResizeObserver(() => world.resize(canvas.clientWidth, canvas.clientHeight))
         observer.observe(canvas)
         world.resize(canvas.clientWidth, canvas.clientHeight)
@@ -257,6 +267,14 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
               <span>
                 {fmtDist(hud.distance, units, 2)} / {fmtDist(route.total, units)} · {fmtDist(route.total - hud.distance, units)} to go
               </span>
+              {init.landmarks
+                .filter((m) => m.distance > hud.distance && m.distance < hud.distance + 5000)
+                .slice(0, 3)
+                .map((m, i) => (
+                  <span key={i} className="coming-up">
+                    {m.kind === 'summit' ? `⛰ ${m.name} ${m.detail}` : m.name} · {fmtDist(m.distance - hud.distance, units, 1)}
+                  </span>
+                ))}
             </div>
             <div className="hud-clock">{fmtTime(hud.elapsed)}</div>
             <div className="hud-grade" style={{ color: gradeColor(hud.grade) }}>
@@ -372,6 +390,7 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
               </div>
             )}
             <MiniMap route={route} lat={hud.lat} lon={hud.lon} />
+            {settings.look.photos && routeId !== 'demo' && <StreetPhoto distance={hud.distance} />}
           </div>
 
           {hud.segment && hud.segment.source === 'strava' && (

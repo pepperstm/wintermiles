@@ -265,3 +265,50 @@ fn reads_gpx_times() {
     assert!(close(pts[11].0 - pts[0].0, 11.0, 1e-9));
     assert!(parse_gpx_track_times("<gpx><trk><trkseg><trkpt lat=\"1\" lon=\"2\"/></trkseg></trk></gpx>").is_err());
 }
+
+#[test]
+fn landmarks_along_the_route() {
+    use wintermiles_core::world::{landmarks, Label, Scenery};
+    let route = l_route(2.0);
+    let at = |d: f64, east_m: f64| {
+        let p = route.sample_at(d);
+        [p.lat, p.lon + east_m / (M_PER_DEG * p.lat.to_radians().cos())]
+    };
+    let scenery = Scenery {
+        labels: vec![
+            Label { kind: "village".into(), name: "Le Bourg".into(), at: at(1000.0, 200.0) },
+            Label { kind: "village".into(), name: "Far Away".into(), at: at(1000.0, 5000.0) },
+            Label { kind: "cafe".into(), name: "Café du Col".into(), at: at(500.0, 20.0) },
+            Label { kind: "cafe".into(), name: "Off the road".into(), at: at(500.0, 300.0) },
+            Label { kind: "water".into(), name: String::new(), at: at(700.0, -10.0) },
+        ],
+        ..Default::default()
+    };
+    let marks = landmarks(&route, Some(&scenery));
+    let names: Vec<&str> = marks.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Café du Col", "Drinking water", "Le Bourg"], "{marks:?}");
+    let village = marks.iter().find(|m| m.name == "Le Bourg").unwrap();
+    // Before the closest approach, so the sign comes on entering.
+    assert!(village.distance < 1000.0 && village.distance > 700.0);
+    // East of a northbound road and west of it are opposite sides.
+    let cafe = &marks[0];
+    let water = &marks[1];
+    assert_eq!(cafe.side, -water.side);
+}
+
+#[test]
+fn picks_photos_facing_along_the_route() {
+    use wintermiles_core::segments::pick_photos;
+    let route = l_route(1.0);
+    let p = |d: f64| route.sample_at(d);
+    let c = |id: &str, d: f64, bearing: f64, t: u64| (id.to_string(), p(d).lat, p(d).lon, bearing, format!("https://x/{id}"), t);
+    // The first leg heads north (bearing 0), the second east (90).
+    let photos = pick_photos(
+        &route,
+        &[c("a", 100.0, 5.0, 1), c("b", 110.0, 355.0, 2), c("back", 300.0, 180.0, 3), c("c", 1500.0, 92.0, 4), c("north-on-east-leg", 1600.0, 0.0, 5)],
+        30.0,
+    );
+    let ids: Vec<&str> = photos.iter().map(|p| p.id.as_str()).collect();
+    // Same 30 m slot: the newer one wins. Looking backwards or sideways: dropped.
+    assert_eq!(ids, ["b", "c"]);
+}

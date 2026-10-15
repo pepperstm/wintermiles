@@ -1113,3 +1113,89 @@ button.small {
   border-radius: 3px;
   min-height: 1px;
 }
+
+/* ── Find a route ─────────────────────────────────────────── */
+.explore {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 16px;
+  height: calc(100vh - 110px);
+}
+.explore-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.explore-side .row input {
+  flex: 1;
+  min-width: 0;
+}
+.explore-map {
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  min-height: 400px;
+}
+.explore .classics {
+  max-height: none;
+}
+.wp {
+  background: var(--accent);
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px system-ui;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.chart.elevation {
+  height: 70px;
+}
+.chart.elevation path {
+  fill: rgba(255, 90, 54, 0.35);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.card.planned {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ok {
+  color: var(--ok);
+}
+.coming-up {
+  font-size: 12px;
+  opacity: 0.85;
+}
+.street-photo {
+  margin-top: 8px;
+  width: 260px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(14, 17, 22, 0.8);
+  position: relative;
+}
+.street-photo img {
+  display: block;
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+}
+.street-photo span {
+  position: absolute;
+  left: 6px;
+  bottom: 4px;
+  font-size: 11px;
+  color: #fff;
+}
+.street-photo.empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
