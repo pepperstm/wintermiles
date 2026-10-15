@@ -852,6 +852,7 @@ mod scenery {
             .into_iter()
             .chain(roundabout(&route))
             .collect(),
+            labels: Vec::new(),
         };
         let dem = level_ground(&route, 100.0);
         let world = World::with_map(route.clone(), Some(dem), 0.0, Some(&scenery), &[]);
