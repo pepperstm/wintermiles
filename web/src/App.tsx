@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import { levelFor } from './core/fmt'
 import { api, mergeSettings, refreshDevices, SettingsContext, smokeHooks, useDevices } from './state'
-import { EMPTY_PROFILE, type Profile, type RideSummary, type RouteMeta, type Settings } from './types'
+import { EMPTY_PROFILE, type Profile, type RideRequest, type RideSummary, type RouteMeta, type Settings } from './types'
 import { Devices } from './ui/Devices'
 import { History } from './ui/History'
 import { Home } from './ui/Home'
 import { Ride } from './ui/Ride'
 import { SettingsScreen } from './ui/Settings'
 import { Summary } from './ui/Summary'
+import { Workouts } from './ui/Workouts'
 
 type Screen =
-  | { name: 'home' | 'devices' | 'history' | 'settings' }
-  | { name: 'ride'; routeId: string }
+  | { name: 'home' | 'workouts' | 'devices' | 'history' | 'settings' }
+  | { name: 'ride'; request: RideRequest }
   | { name: 'summary'; ride: RideSummary }
 
 const TABS = [
   { name: 'home', label: 'Routes' },
+  { name: 'workouts', label: 'Workouts' },
   { name: 'devices', label: 'Devices' },
   { name: 'history', label: 'Progress' },
   { name: 'settings', label: 'Settings' }
@@ -29,8 +31,8 @@ async function runSmoke(setScreen: (s: Screen) => void): Promise<void> {
     // Ride the newest library route (or the demo) with the simulated rider.
     const routes = await api.kv.get<RouteMeta[]>('routes')
     await api.devices.demoAdd()
-    setScreen({ name: 'ride', routeId: routes?.[0]?.id ?? 'demo' })
-  } else if (smoke.screen === 'devices' || smoke.screen === 'history' || smoke.screen === 'settings') {
+    setScreen({ name: 'ride', request: { routeId: routes?.[0]?.id ?? 'demo', workoutId: smoke.workout, groupRoom: smoke.room, ghostIds: smoke.ghosts ?? [] } })
+  } else if (smoke.screen === 'devices' || smoke.screen === 'history' || smoke.screen === 'settings' || smoke.screen === 'workouts' || smoke.screen === 'home') {
     if (smoke.screen === 'devices') await api.devices.demoAdd()
     setScreen({ name: smoke.screen })
   }
@@ -80,7 +82,7 @@ export function App(): React.JSX.Element | null {
   if (screen.name === 'ride') {
     body = (
       <Ride
-        routeId={screen.routeId}
+        request={screen.request}
         onExit={() => setScreen({ name: 'home' })}
         onDevices={() => setScreen({ name: 'devices' })}
         onFinish={(ride) => setScreen({ name: 'summary', ride })}
@@ -115,7 +117,8 @@ export function App(): React.JSX.Element | null {
           </div>
         </header>
         <main className="page">
-          {screen.name === 'home' && <Home onRide={(routeId) => setScreen({ name: 'ride', routeId })} />}
+          {screen.name === 'home' && <Home onRide={(request) => setScreen({ name: 'ride', request })} />}
+          {screen.name === 'workouts' && <Workouts />}
           {screen.name === 'devices' && <Devices />}
           {screen.name === 'history' && <History profile={profile} />}
           {screen.name === 'settings' && <SettingsScreen />}

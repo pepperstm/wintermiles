@@ -855,3 +855,261 @@ select:focus {
   height: 100%;
   display: block;
 }
+
+/* ── Workouts ─────────────────────────────────────────────── */
+.workout-shape {
+  display: block;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+}
+.card.workout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.card.workout h3 {
+  margin: 4px 0 0;
+}
+.hud.workout-panel {
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 46vw);
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(14, 17, 22, 0.82);
+  border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.workout-panel ~ .banner {
+  top: 222px;
+}
+.wk-now {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.wk-now > div {
+  display: flex;
+  flex-direction: column;
+}
+.wk-now b {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.wk-now > div:first-child b {
+  font-size: 30px;
+}
+.wk-now span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.wk-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.wk-controls button {
+  padding: 2px 10px;
+}
+.wk-done {
+  text-align: center;
+  color: var(--ok);
+}
+.banner.cue {
+  top: auto;
+  bottom: 210px;
+  background: rgba(14, 17, 22, 0.85);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-weight: 600;
+}
+.banner.segment {
+  background: rgba(150, 70, 10, 0.88);
+  border-color: var(--strava);
+}
+.banner em.ahead {
+  color: #8fffbf;
+  font-style: normal;
+}
+.banner em.behind {
+  color: #ffd0c4;
+  font-style: normal;
+}
+.group-chip {
+  position: absolute;
+  z-index: 1000;
+  top: 64px;
+  left: 20px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(14, 17, 22, 0.8);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+/* ── Ride set-up ──────────────────────────────────────────── */
+.setup-backdrop {
+  z-index: 2000;
+  background: rgba(8, 10, 14, 0.75) !important;
+  position: fixed;
+  overflow-y: auto;
+  align-items: flex-start;
+  padding: 40px 0;
+}
+.modal.setup {
+  max-width: 560px;
+  width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal.setup h3 {
+  margin: 10px 0 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.modal.setup select {
+  width: 100%;
+}
+.ghost-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ghost-row i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.ghost-row span {
+  flex: 1;
+}
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 180px;
+  overflow-y: auto;
+  gap: 2px;
+}
+.pick-list button {
+  text-align: left;
+}
+button.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.card.join {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.pb-banner.dim {
+  opacity: 0.8;
+}
+
+/* ── Fitness ──────────────────────────────────────────────── */
+.fitness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.chart text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.chart text.value {
+  fill: var(--text);
+  font-size: 10px;
+}
+.chart .axis {
+  stroke: var(--line);
+}
+.chart .series {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.chart .series.dim {
+  stroke: var(--muted);
+  stroke-dasharray: 4 3;
+}
+.chart .series.fitness {
+  stroke: #4aa3ff;
+}
+.chart .series.fatigue {
+  stroke: #ff9a3c;
+}
+.chart .series.form {
+  stroke: var(--ok);
+}
+.chart .bar-tss {
+  fill: rgba(255, 255, 255, 0.12);
+}
+.legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.legend .fitness {
+  color: #4aa3ff;
+}
+.legend .fatigue {
+  color: #ff9a3c;
+}
+.legend .form {
+  color: var(--ok);
+}
+.legend .dim {
+  color: var(--muted);
+}
+.card.goal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bar.big {
+  height: 12px;
+}
+.streaks {
+  display: flex;
+  gap: 20px;
+}
+.streaks b {
+  font-size: 20px;
+  margin-right: 4px;
+}
+.weeks {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 60px;
+}
+.weeks > div {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+}
+.weeks i {
+  display: block;
+  width: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  min-height: 1px;
+}

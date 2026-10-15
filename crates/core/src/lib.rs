@@ -5,10 +5,13 @@
 
 pub mod devices;
 pub mod fit;
+pub mod fitness;
 pub mod gamify;
 pub mod gpx;
 pub mod health;
 pub mod physics;
 pub mod ride;
+pub mod segments;
 pub mod types;
+pub mod workout;
 pub mod world;

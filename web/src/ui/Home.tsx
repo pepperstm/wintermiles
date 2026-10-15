@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { errorText } from '../bridge'
 import { fmtDist, fmtEle, fmtTime } from '../core/fmt'
 import { api, useSettings, useStored } from '../state'
-import type { RouteMeta } from '../types'
+import type { RideRequest, RouteMeta } from '../types'
+import { RideSetup } from './RideSetup'
 
 export function RoutePreview({ outline }: { outline: [number, number][] }): React.JSX.Element {
   const path = useMemo(() => {
@@ -25,13 +26,16 @@ export function RoutePreview({ outline }: { outline: [number, number][] }): Reac
   )
 }
 
-export function Home({ onRide }: { onRide: (routeId: string) => void }): React.JSX.Element {
+export function Home({ onRide }: { onRide: (request: RideRequest) => void }): React.JSX.Element {
   const { settings } = useSettings()
   const [routes, saveRoutes] = useStored<RouteMeta[]>('routes', [])
   const [bests] = useStored<Record<string, number>>('bests', {})
   const [error, setError] = useState('')
   const [dragging, setDragging] = useState(false)
   const [demo, setDemo] = useState<RouteMeta | null>(null)
+  const [setup, setSetup] = useState<{ route: RouteMeta; room?: string } | null>(null)
+  const [joining, setJoining] = useState(false)
+  const [room, setRoom] = useState('')
   useEffect(() => void api.routes.demoMeta().then(setDemo), [])
 
   const add = (added: RouteMeta[], problems: string[]): void => {
@@ -45,6 +49,9 @@ export function Home({ onRide }: { onRide: (routeId: string) => void }): React.J
     void api.kv.del(`route-${route.id}`)
     void api.kv.del(`buildings-${route.id}`)
     void api.kv.del(`scenery-${route.id}`)
+    void api.kv.del(`ghosts-${route.id}`)
+    void api.kv.del(`segments-${route.id}`)
+    void api.kv.del(`places-${route.id}`)
   }
 
   const onDrop = async (e: React.DragEvent): Promise<void> => {
@@ -78,7 +85,7 @@ export function Home({ onRide }: { onRide: (routeId: string) => void }): React.J
       </div>
       <div className="route-best">{bests?.[r.id] ? `Best ${fmtTime(bests[r.id])}` : builtIn ? 'Built-in demo route' : 'Not ridden yet'}</div>
       <div className="row">
-        <button className="primary" onClick={() => onRide(r.id)}>
+        <button className="primary" onClick={() => setSetup({ route: r })}>
           Ride
         </button>
         {!builtIn && (
@@ -105,10 +112,41 @@ export function Home({ onRide }: { onRide: (routeId: string) => void }): React.J
           <h1>Your routes</h1>
           <p className="muted">Import a GPX from Strava, Komoot, RideWithGPS or your bike computer — or drag files onto this window.</p>
         </div>
-        <button className="primary" onClick={() => void api.routes.importDialog().then((r) => add(r.added, r.problems), (err) => setError(errorText(err)))}>
-          Import GPX…
-        </button>
+        <div className="row">
+          <button onClick={() => setJoining(true)}>Join a group ride</button>
+          <button className="primary" onClick={() => void api.routes.importDialog().then((r) => add(r.added, r.problems), (err) => setError(errorText(err)))}>
+            Import GPX…
+          </button>
+        </div>
       </div>
+      {joining && (
+        <div className="card join">
+          <label className="field">
+            <span>Room code from the host</span>
+            <input value={room} autoFocus onChange={(e) => setRoom(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32))} />
+          </label>
+          <div className="row">
+            <button
+              className="primary"
+              disabled={!room}
+              onClick={() =>
+                void api.group.fetchRoute(room).then(
+                  (meta) => {
+                    if (!(routes ?? []).some((r) => r.id === meta.id)) saveRoutes([meta, ...(routes ?? [])])
+                    setJoining(false)
+                    setSetup({ route: meta, room })
+                  },
+                  (err) => setError(errorText(err))
+                )
+              }
+            >
+              Join
+            </button>
+            <button onClick={() => setJoining(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {setup && <RideSetup route={setup.route} room={setup.room} onCancel={() => setSetup(null)} onStart={(r) => (setSetup(null), onRide(r))} />}
       {error && <div className="error">{error}</div>}
       <div className="grid">
         {(routes ?? []).map((r) => card(r, false))}

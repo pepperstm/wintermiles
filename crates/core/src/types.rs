@@ -50,11 +50,109 @@ pub struct TrainerSettings {
     pub mode: TrainerMode,
     pub erg_watts: f64,
     pub virtual_power: bool,
+    /// Steepest gradient (fraction) sent to the trainer, after scaling; 0 means no limit.
+    pub max_grade: f64,
+    /// Fraction of the (already scaled) downhill gradient applied, so descents don't spin out.
+    pub downhill: f64,
+    /// Hold workout targets in ERG mode (otherwise targets are shown and the gradient applies).
+    pub workout_erg: bool,
 }
 
 impl Default for TrainerSettings {
     fn default() -> Self {
-        Self { difficulty: 0.75, mode: TrainerMode::Sim, erg_watts: 150.0, virtual_power: false }
+        Self { difficulty: 0.75, mode: TrainerMode::Sim, erg_watts: 150.0, virtual_power: false, max_grade: 0.15, downhill: 0.5, workout_erg: true }
+    }
+}
+
+impl TrainerSettings {
+    /// The gradient to send the trainer for a road gradient.
+    pub fn trainer_grade(&self, grade: f64) -> f64 {
+        let mut g = grade * self.difficulty;
+        if g < 0.0 {
+            g *= self.downhill;
+        }
+        if self.max_grade > 0.0 {
+            g = g.clamp(-self.max_grade, self.max_grade);
+        }
+        g
+    }
+}
+
+/// A season target, e.g. 1000 km before spring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Goal {
+    pub name: String,
+    pub distance_km: f64,
+    /// `YYYY-MM-DD`; empty means the next 20 March.
+    pub deadline: String,
+    /// Rides on or after this date count; empty means the goal's first day is when it was set.
+    pub from: String,
+}
+
+impl Default for Goal {
+    fn default() -> Self {
+        Self { name: "Winter miles".into(), distance_km: 1000.0, deadline: String::new(), from: String::new() }
+    }
+}
+
+/// How the world looks: time of day and weather.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WorldLook {
+    /// "dawn", "day", "evening", "dusk", "night" or "clock" (the real time of day).
+    pub time_of_day: String,
+    /// "clear", "cloudy", "rain", "fog", "snow" or "live" (the weather at the route now).
+    pub weather: String,
+    /// Place names, summits and points of interest along the route.
+    pub landmarks: bool,
+    /// Street-level photos from Mapillary (needs a free client token).
+    pub photos: bool,
+    pub mapillary_token: String,
+}
+
+impl Default for WorldLook {
+    fn default() -> Self {
+        Self { time_of_day: "day".into(), weather: "clear".into(), landmarks: true, photos: false, mapillary_token: String::new() }
+    }
+}
+
+/// A fan and lights driven by the ride, through a smart plug or Home Assistant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SmartHome {
+    /// "none", "homeassistant", "shelly", "tasmota" or "webhook".
+    pub kind: String,
+    /// Home Assistant base URL, the plug's address, or the webhook URL (with `{level}`, `{power}`, `{zone}`).
+    pub url: String,
+    /// Home Assistant fan entity (e.g. `fan.desk_fan`) or switch entity.
+    pub fan_entity: String,
+    /// Home Assistant light entity, coloured by power zone.
+    pub light_entity: String,
+    /// What drives the fan: "speed", "power" or "hr".
+    pub fan_by: String,
+    /// Fan off below this speed (km/h), power (W) or heart rate.
+    pub fan_from: f64,
+    /// Fan full at or above this.
+    pub fan_full: f64,
+}
+
+impl Default for SmartHome {
+    fn default() -> Self {
+        Self { kind: "none".into(), url: String::new(), fan_entity: String::new(), light_entity: String::new(), fan_by: "speed".into(), fan_from: 10.0, fan_full: 35.0 }
+    }
+}
+
+/// Group rides through a relay server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GroupSettings {
+    pub relay_url: String,
+}
+
+impl Default for GroupSettings {
+    fn default() -> Self {
+        Self { relay_url: "ws://127.0.0.1:47800".into() }
     }
 }
 
@@ -86,6 +184,10 @@ pub struct Settings {
     pub scenery: bool,
     pub strava_auto_upload: bool,
     pub export_dir: String,
+    pub goal: Goal,
+    pub look: WorldLook,
+    pub smart: SmartHome,
+    pub group: GroupSettings,
 }
 
 impl Default for Settings {
@@ -101,6 +203,10 @@ impl Default for Settings {
             scenery: true,
             strava_auto_upload: false,
             export_dir: String::new(),
+            goal: Default::default(),
+            look: Default::default(),
+            smart: Default::default(),
+            group: Default::default(),
         }
     }
 }
@@ -127,6 +233,8 @@ pub struct PersonalBest {
     pub trace: Vec<f64>,
     /// Best time in seconds per detected climb index.
     pub climbs: BTreeMap<usize, f64>,
+    /// Best efforts on segments (climbs and Strava segments), by segment id.
+    pub segments: BTreeMap<String, crate::segments::SegmentBest>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -137,6 +245,7 @@ pub struct Profile {
     pub total_distance: f64,
     pub total_ascent: f64,
     pub badges: Vec<String>,
+    pub segment_prs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +274,19 @@ pub struct RideSummary {
     pub file_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strava_activity_id: Option<u64>,
+    /// Best average power for each of `fitness::CURVE_DURATIONS`.
+    #[serde(default)]
+    pub curve: Vec<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workout: Option<String>,
+    /// FTP this ride suggests, when it is higher than the one set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ftp_estimate: Option<crate::fitness::FtpEstimate>,
+    /// Segment bests set on this ride.
+    #[serde(default)]
+    pub segment_prs: Vec<String>,
+    #[serde(default)]
+    pub group: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

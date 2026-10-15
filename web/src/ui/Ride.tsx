@@ -3,13 +3,14 @@ import { errorText } from '../bridge'
 import { distUnit, distValue, fmtDist, fmtEle, fmtTime, gradeColor, speedUnit, speedValue, zoneColor } from '../core/fmt'
 import type { Route } from '../core/gpx'
 import { api, smokeHooks, useSettings } from '../state'
-import type { RideInit, RideState, RideSummary } from '../types'
+import type { RideInit, RideRequest, RideState, RideSummary } from '../types'
+import { WorkoutShape } from './Workouts'
 import { World } from '../world/scene'
 import { MiniMap } from './MiniMap'
 import { ProfileChart } from './ProfileChart'
 
 interface Props {
-  routeId: string
+  request: RideRequest
   onExit: () => void
   onDevices: () => void
   onFinish: (ride: RideSummary) => void
@@ -25,7 +26,14 @@ function fmtGap(seconds: number): string {
   return `${seconds <= 0 ? '−' : '+'}${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 
-export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX.Element {
+/** Coggan zone number for a power. */
+function zone(power: number, ftp: number): number {
+  const r = ftp > 0 ? power / ftp : 0
+  return [0.55, 0.75, 0.9, 1.05, 1.2, 1.5].filter((l) => r >= l).length + 1
+}
+
+export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX.Element {
+  const routeId = request.routeId
   const { settings, update } = useSettings()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const worldRef = useRef<World | null>(null)
@@ -71,7 +79,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
 
     void (async () => {
       try {
-        const started = await api.ride.start(routeId)
+        const started = await api.ride.start(request)
         if (disposed) return void api.ride.abort()
         const data = await api.ride.routeData()
         if (disposed) return
@@ -104,7 +112,6 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
         const smoke = await api.smoke.config()
         for (let i = 0; i < (smoke?.camera ?? 0); i++) world.cycleCamera()
 
-        const rivalInfo = new Map(started.rivals.map((r) => [r.id, r]))
         let latest: { s: RideState; at: number } | null = null
         let received = 0
         offState = api.ride.onState((s) => {
@@ -134,17 +141,14 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
               distance: Math.min(loaded.total, s.distance + s.speed * ahead),
               speed: s.speed,
               cadence: s.cadence ?? (s.moving && s.power > 20 ? 80 : 0),
-              rivals: s.rivals.map((r) => {
-                const info = rivalInfo.get(r.id)
-                return {
-                  id: r.id,
-                  name: info?.name ?? '',
-                  color: info?.color ?? 0xffffff,
-                  ghost: info?.kind === 'ghost',
-                  distance: Math.min(loaded.total, r.distance + r.speed * ahead),
-                  speed: r.speed
-                }
-              })
+              rivals: s.rivals.map((r) => ({
+                id: r.id,
+                name: r.name,
+                color: r.color,
+                ghost: r.kind === 'ghost',
+                distance: Math.min(loaded.total, r.distance + r.speed * ahead),
+                speed: r.speed
+              }))
             })
             frames++
           } catch (err) {
@@ -180,13 +184,18 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
       // Harmless if the ride was already finished and saved.
       void api.ride.abort()
     }
+    // The request is fixed for the life of this screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId, finish])
 
+  const workoutRef = useRef(false)
+  workoutRef.current = Boolean(init?.workout)
   const togglePause = (): void => void api.ride.togglePause()
   const setTrainer = (patch: Partial<typeof settings.trainer>): void => update((s) => ({ ...s, trainer: { ...s.trainer, ...patch } }))
   const nudge = (delta: number): void => {
     const cfg = settingsRef.current.trainer
-    if (cfg.mode === 'erg') setTrainer({ ergWatts: Math.max(50, Math.min(1000, cfg.ergWatts + delta)) })
+    if (workoutRef.current) void api.ride.intensity(delta > 0 ? 0.05 : -0.05)
+    else if (cfg.mode === 'erg') setTrainer({ ergWatts: Math.max(50, Math.min(1000, cfg.ergWatts + delta)) })
     else void api.devices.demoNudge(delta)
   }
 
@@ -225,10 +234,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
   const standings = ready
     ? [
         { id: 'me', name: settings.rider.name || 'You', color: '#ff5a36', delta: 0, me: true },
-        ...hud.rivals.map((r) => {
-          const info = init.rivals.find((i) => i.id === r.id)
-          return { id: r.id, name: info?.name ?? r.id, color: hex(info?.color ?? 0xffffff), delta: r.distance - hud.distance, me: false }
-        })
+        ...hud.rivals.map((r) => ({ id: r.id, name: r.name, color: hex(r.color), delta: r.distance - hud.distance, me: false }))
       ].sort((a, b) => b.delta - a.delta)
     : []
 
@@ -269,7 +275,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
                 {Math.round(hud.power)}
               </div>
               <div className="tile-label">
-                watts · {(hud.power / settings.rider.weightKg).toFixed(1)} W/kg
+                watts · {(hud.power / settings.rider.weightKg).toFixed(1)} W/kg · Z{zone(hud.power, settings.rider.ftp)}
               </div>
             </div>
             <div className="tile">
@@ -285,6 +291,68 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
               <div className="tile-label">rpm</div>
             </div>
           </div>
+
+          {init.workout && (
+            <div className="hud workout-panel">
+              {hud.workout ? (
+                <>
+                  <div className="wk-now">
+                    <div>
+                      <b style={{ color: zoneColor(hud.workoutTarget ?? 0, settings.rider.ftp) }}>
+                        {hud.workout.kind === 'power' ? `${Math.round(hud.workoutTarget ?? 0)} W` : hud.workout.kind === 'max' ? 'ALL OUT' : 'Free ride'}
+                      </b>
+                      <span>
+                        {hud.workout.kind === 'power' ? `${Math.round(hud.workout.target * 100 * hud.intensity)}% FTP` : 'no target'}
+                        {hud.workout.cadence ? ` · ${hud.workout.cadence} rpm` : ''}
+                      </span>
+                    </div>
+                    <div>
+                      <b>{fmtTime(hud.workout.stepLeftS)}</b>
+                      <span>
+                        step {hud.workout.index + 1} of {init.workout.steps.length}
+                      </span>
+                    </div>
+                    <div>
+                      {(() => {
+                        const next = init.workout.steps[hud.workout.index + 1]
+                        if (!next) return <span>last step</span>
+                        return (
+                          <>
+                            <b>{next.kind === 'power' ? `${Math.round(next.from * settings.rider.ftp * hud.intensity)} W` : next.kind === 'max' ? 'All out' : 'Free'}</b>
+                            <span>next · {fmtTime(next.durationS)}</span>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                  <WorkoutShape
+                    shape={init.workout.steps.flatMap((st, i, all) => {
+                      const t0 = all.slice(0, i).reduce((a, x) => a + x.durationS, 0)
+                      const lvl = (v: number): number => (st.kind === 'power' ? v : st.kind === 'max' ? 1.6 : 0.6)
+                      return [
+                        [t0, lvl(st.from)],
+                        [t0 + st.durationS, lvl(st.to)]
+                      ] as [number, number][]
+                    })}
+                    height={34}
+                    at={hud.workoutTime}
+                  />
+                  <div className="wk-controls">
+                    <button onClick={() => void api.ride.intensity(-0.05)}>−</button>
+                    <span>Intensity {Math.round(hud.intensity * 100)}%</span>
+                    <button onClick={() => void api.ride.intensity(0.05)}>+</button>
+                    <button className="ghost" onClick={() => void api.ride.skipStep()}>
+                      Skip step
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="wk-done">Workout complete: {init.workout.name}. Ride on freely.</div>
+              )}
+            </div>
+          )}
+          {hud.cue && <div className="banner cue">{hud.cue}</div>}
+          {hud.groupStatus && <div className="group-chip">{hud.groupStatus}</div>}
 
           <div className="hud right">
             {hud.gap !== null && (
@@ -306,7 +374,36 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
             <MiniMap route={route} lat={hud.lat} lon={hud.lon} />
           </div>
 
-          {climb && (
+          {hud.segment && hud.segment.source === 'strava' && (
+            <div className="banner climb segment">
+              <b>
+                ⏱ {hud.segment.name}
+                {hud.segment.gap !== null && <em className={hud.segment.gap <= 0 ? 'ahead' : 'behind'}> {fmtGap(hud.segment.gap)} vs your best</em>}
+              </b>
+              <span>
+                {fmtDist(hud.segment.toGo, units, 2)} to go · {fmtTime(hud.segment.elapsed)}
+                {hud.segment.best !== null && ` (best ${fmtTime(hud.segment.best)})`}
+              </span>
+              <div className="bar">
+                <div style={{ width: `${Math.min(100, (1 - hud.segment.toGo / hud.segment.length) * 100)}%` }} />
+              </div>
+            </div>
+          )}
+          {!(hud.segment && hud.segment.source === 'strava') && hud.segmentResult && hud.segmentResult.source === 'strava' && (
+            <div className="banner summit">
+              <b>
+                {hud.segmentResult.name}: {fmtTime(hud.segmentResult.timeS)}
+              </b>
+              <span>
+                {hud.segmentResult.previousBest === null
+                  ? 'First time timed here.'
+                  : hud.segmentResult.timeS < hud.segmentResult.previousBest
+                    ? `New best, ${fmtTime(hud.segmentResult.previousBest - hud.segmentResult.timeS)} faster!`
+                    : `${fmtTime(hud.segmentResult.timeS - hud.segmentResult.previousBest)} off your best.`}
+              </span>
+            </div>
+          )}
+          {climb && !(hud.segment && hud.segment.source === 'strava') && (
             <div className="banner climb">
               <b>
                 Climb {hud.climbIndex! + 1}
@@ -315,13 +412,14 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
               <span>
                 {fmtDist(Math.max(0, climb.end - hud.distance), units, 2)} to the top · avg {(climb.avgGrade * 100).toFixed(1)}% · {fmtTime(hud.climbElapsed)}
                 {climbBest !== undefined && ` (best ${fmtTime(climbBest)})`}
+                {hud.segment?.source === 'climb' && hud.segment.gap !== null && ` · ${fmtGap(hud.segment.gap)} vs best`}
               </span>
               <div className="bar">
                 <div style={{ width: `${Math.min(100, ((hud.distance - climb.start) / climb.length) * 100)}%` }} />
               </div>
             </div>
           )}
-          {!climb && hud.climbResult && (
+          {!climb && !hud.segment && !hud.segmentResult && hud.climbResult && (
             <div className="banner summit">
               <b>
                 Summit! Climb {hud.climbResult.index + 1} in {fmtTime(hud.climbResult.timeS)}
@@ -375,15 +473,15 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
             <div className="controls">
               <button onClick={togglePause}>{hud.paused ? 'Resume' : 'Pause'}</button>
               <button onClick={() => worldRef.current?.cycleCamera()}>Camera</button>
-              <div className="seg">
+              {init.workout && hud.workout ? null : <div className="seg">
                 <button className={mode === 'sim' ? 'on' : ''} onClick={() => setTrainer({ mode: 'sim' })} title="Trainer resistance follows the gradient">
                   Gradient
                 </button>
                 <button className={mode === 'erg' ? 'on' : ''} onClick={() => setTrainer({ mode: 'erg' })} title="Trainer holds a fixed power">
                   ERG
                 </button>
-              </div>
-              {mode === 'erg' ? (
+              </div>}
+              {init.workout && hud.workout ? null : mode === 'erg' ? (
                 <div className="stepper">
                   <button onClick={() => nudge(-10)}>−</button>
                   <span>{settings.trainer.ergWatts} W</span>
@@ -396,7 +494,7 @@ export function Ride({ routeId, onExit, onDevices, onFinish }: Props): React.JSX
                   <button onClick={() => setTrainer({ difficulty: Math.min(1, Math.round((settings.trainer.difficulty + 0.05) * 100) / 100) })}>+</button>
                 </div>
               )}
-              {hud.demoTarget !== null && mode === 'sim' && (
+              {hud.demoTarget !== null && mode === 'sim' && !(init.workout && hud.workout) && (
                 <div className="stepper" title="Demo rider effort (↑/↓)">
                   <button onClick={() => nudge(-10)}>−</button>
                   <span>Demo {Math.round(hud.demoTarget)} W</span>

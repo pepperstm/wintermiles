@@ -124,7 +124,7 @@ pub async fn connect(dir: &Path, http: &reqwest::Client, open_browser: impl FnOn
     let redirect = format!("http://localhost:{PORT}/callback");
     let auth = reqwest::Url::parse_with_params(
         "https://www.strava.com/oauth/authorize",
-        &[("client_id", creds.client_id.as_str()), ("response_type", "code"), ("redirect_uri", &redirect), ("approval_prompt", "auto"), ("scope", "read,activity:write"), ("state", &state)],
+        &[("client_id", creds.client_id.as_str()), ("response_type", "code"), ("redirect_uri", &redirect), ("approval_prompt", "auto"), ("scope", "read,activity:read_all,activity:write"), ("state", &state)],
     )
     .map_err(|e| e.to_string())?;
     open_browser(auth.as_str());
@@ -202,4 +202,105 @@ pub async fn upload(dir: &Path, http: &reqwest::Client, file: &Path, name: &str,
         }
     }
     Err("Strava is still processing the upload — check your Strava feed in a minute.".into())
+}
+
+async fn get_json(http: &reqwest::Client, token: &str, url: &str) -> Result<serde_json::Value, String> {
+    let res = http.get(url).bearer_auth(token).send().await.map_err(|e| format!("Could not reach Strava: {e}"))?;
+    let status = res.status();
+    let json: serde_json::Value = res.json().await.unwrap_or_default();
+    match status.as_u16() {
+        200..=299 => Ok(json),
+        401 | 403 => Err("Strava refused: reconnect Strava in Settings so WinterMiles may read your activities and segments.".into()),
+        429 => Err("Strava's rate limit was reached — try again in 15 minutes.".into()),
+        code => Err(format!("Strava request failed ({code}): {}", json["message"].as_str().unwrap_or("unknown error"))),
+    }
+}
+
+/// A Strava segment's shape and details, as found near a route.
+pub struct FoundSegment {
+    pub id: u64,
+    pub name: String,
+    pub points: String,
+    pub distance: f64,
+    pub avg_grade: f64,
+}
+
+/// Segments Strava suggests in each part of the route, plus the rider's starred segments.
+/// `boxes` are `[south, west, north, east]` areas covering the route.
+pub async fn segments_near(dir: &Path, http: &reqwest::Client, boxes: &[[f64; 4]]) -> Result<Vec<FoundSegment>, String> {
+    let token = access_token(dir, http).await?;
+    let mut found: Vec<FoundSegment> = Vec::new();
+    let mut push = |v: &serde_json::Value| {
+        let Some(id) = v["id"].as_u64() else { return };
+        if found.iter().any(|f| f.id == id) {
+            return;
+        }
+        let points = v["points"].as_str().or(v["map"]["polyline"].as_str()).unwrap_or("").to_string();
+        if points.is_empty() {
+            return;
+        }
+        found.push(FoundSegment {
+            id,
+            name: v["name"].as_str().unwrap_or("Segment").trim().to_string(),
+            points,
+            distance: v["distance"].as_f64().unwrap_or(0.0),
+            avg_grade: v["avg_grade"].as_f64().or(v["average_grade"].as_f64()).unwrap_or(0.0) / 100.0,
+        });
+    };
+    for b in boxes {
+        let url = format!("https://www.strava.com/api/v3/segments/explore?bounds={:.5},{:.5},{:.5},{:.5}&activity_type=riding", b[0], b[1], b[2], b[3]);
+        let json = get_json(http, &token, &url).await?;
+        json["segments"].as_array().into_iter().flatten().for_each(&mut push);
+    }
+    let starred = get_json(http, &token, "https://www.strava.com/api/v3/segments/starred?per_page=200").await?;
+    starred.as_array().into_iter().flatten().for_each(&mut push);
+    Ok(found)
+}
+
+/// The rider's recent rides, for picking one to race as a ghost.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityItem {
+    id: u64,
+    name: String,
+    start: String,
+    distance: f64,
+    moving_time: f64,
+}
+
+pub async fn recent_rides(dir: &Path, http: &reqwest::Client) -> Result<Vec<ActivityItem>, String> {
+    let token = access_token(dir, http).await?;
+    let json = get_json(http, &token, "https://www.strava.com/api/v3/athlete/activities?per_page=60").await?;
+    Ok(json
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| a["type"].as_str().is_some_and(|t| t.contains("Ride")) && a["start_latlng"].as_array().is_some_and(|l| !l.is_empty()))
+        .filter_map(|a| {
+            Some(ActivityItem {
+                id: a["id"].as_u64()?,
+                name: a["name"].as_str().unwrap_or("Ride").to_string(),
+                start: a["start_date_local"].as_str().unwrap_or("").to_string(),
+                distance: a["distance"].as_f64().unwrap_or(0.0),
+                moving_time: a["moving_time"].as_f64().unwrap_or(0.0),
+            })
+        })
+        .collect())
+}
+
+/// An activity's timed GPS track as `(unix seconds, lat, lon)`.
+pub async fn activity_track(dir: &Path, http: &reqwest::Client, id: u64) -> Result<(String, Vec<(f64, f64, f64)>), String> {
+    let token = access_token(dir, http).await?;
+    let info = get_json(http, &token, &format!("https://www.strava.com/api/v3/activities/{id}")).await?;
+    let start = info["start_date"].as_str().and_then(wintermiles_core::gpx::parse_iso_time).unwrap_or(0.0);
+    let streams = get_json(http, &token, &format!("https://www.strava.com/api/v3/activities/{id}/streams?keys=latlng,time&key_by_type=true")).await?;
+    let (Some(ll), Some(tt)) = (streams["latlng"]["data"].as_array(), streams["time"]["data"].as_array()) else {
+        return Err("That activity has no GPS track.".into());
+    };
+    let track = ll
+        .iter()
+        .zip(tt)
+        .filter_map(|(p, t)| Some((start + t.as_f64()?, p[0].as_f64()?, p[1].as_f64()?)))
+        .collect();
+    Ok((info["name"].as_str().unwrap_or("Strava ride").to_string(), track))
 }

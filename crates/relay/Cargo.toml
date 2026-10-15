@@ -1,0 +1,13 @@
+[package]
+name = "wintermiles-relay"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Group-ride relay for WinterMiles: passes riders' positions between everyone in a room."
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite = "0.24"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

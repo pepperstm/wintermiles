@@ -13,7 +13,11 @@ export function mergeSettings(stored: Partial<Settings> | null): Settings {
     rider: { ...DEFAULT_SETTINGS.rider, ...s.rider },
     physics: { ...DEFAULT_SETTINGS.physics, ...s.physics },
     trainer: { ...DEFAULT_SETTINGS.trainer, ...s.trainer },
-    bots: { ...DEFAULT_SETTINGS.bots, ...s.bots }
+    bots: { ...DEFAULT_SETTINGS.bots, ...s.bots },
+    goal: { ...DEFAULT_SETTINGS.goal, ...s.goal },
+    look: { ...DEFAULT_SETTINGS.look, ...s.look },
+    smart: { ...DEFAULT_SETTINGS.smart, ...s.smart },
+    group: { ...DEFAULT_SETTINGS.group, ...s.group }
   }
 }
 

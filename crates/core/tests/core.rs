@@ -272,7 +272,7 @@ mod ride {
         assert!(first.ghost_gap().is_none());
         assert!(first.ascent > 50.0);
 
-        let pb = PersonalBest { time_s: first.elapsed, trace: first.trace.clone(), climbs: first.climb_times.clone() };
+        let pb = PersonalBest { time_s: first.elapsed, trace: first.trace.clone(), climbs: first.climb_times.clone(), ..Default::default() };
         let mut second = RideEngine::new(route, &settings(), Some(pb));
         assert_eq!(second.rivals[0].kind, RivalKind::Ghost);
         run(&mut second, 120, 300.0, &mut clock);
@@ -295,7 +295,7 @@ mod ride {
         engine.user_paused = true;
         run(&mut engine, 10, 200.0, &mut clock);
         assert_eq!(engine.distance, d);
-        assert_eq!(engine.trainer_grade(1.0), 0.0);
+        assert_eq!(engine.trainer_grade(&Default::default()), 0.0);
     }
 }
 
@@ -304,7 +304,7 @@ mod gamify {
 
     #[test]
     fn awards_xp_levels_and_badges_once() {
-        let ride = RideFacts { distance_m: 40_000.0, ascent_m: 600.0, duration_s: 5400.0, completed: true, beat_pb: false, np: 150.0, ftp: 200.0, climb_categories: vec!["3".into()] };
+        let ride = RideFacts { distance_m: 40_000.0, ascent_m: 600.0, duration_s: 5400.0, completed: true, beat_pb: false, np: 150.0, ftp: 200.0, climb_categories: vec!["3".into()], ..Default::default() };
         let mut profile = Profile::default();
         let (xp, mut badges) = apply_ride(&mut profile, &ride);
         assert_eq!(xp, 400 + 120 + 50);

@@ -238,11 +238,95 @@ function HealthCard(): React.JSX.Element {
   )
 }
 
+function FanCard(): React.JSX.Element {
+  const { settings, update } = useSettings()
+  const smart = settings.smart
+  const set = (patch: Partial<Settings['smart']>): void => update((s) => ({ ...s, smart: { ...s.smart, ...patch } }))
+  const [token, setToken] = useState('')
+  const [status, setStatus] = useState('')
+  const unit = smart.fanBy === 'power' ? 'W' : smart.fanBy === 'hr' ? 'bpm' : 'km/h'
+  return (
+    <section className="card">
+      <h2>Fan &amp; lights</h2>
+      <p className="muted">Switch a fan on (and faster) as you speed up or work harder, and colour a light by power zone.</p>
+      <div className="fields">
+        <label className="field">
+          <span>Connection</span>
+          <select value={smart.kind} onChange={(e) => set({ kind: e.target.value as Settings['smart']['kind'] })}>
+            <option value="none">None</option>
+            <option value="homeassistant">Home Assistant</option>
+            <option value="shelly">Shelly plug</option>
+            <option value="tasmota">Tasmota plug</option>
+            <option value="webhook">Web address (webhook)</option>
+          </select>
+        </label>
+        {smart.kind !== 'none' && (
+          <label className="field">
+            <span>{smart.kind === 'homeassistant' ? 'Home Assistant address' : smart.kind === 'webhook' ? 'Address to call' : "Plug's IP address"}</span>
+            <input
+              value={smart.url}
+              onChange={(e) => set({ url: e.target.value.trim() })}
+              placeholder={smart.kind === 'homeassistant' ? 'http://homeassistant.local:8123' : smart.kind === 'webhook' ? 'http://…/fan?level={level}&zone={zone}' : '192.168.1.40'}
+            />
+            {smart.kind === 'webhook' && <small>{'{level}'} (0–100), {'{zone}'} (1–7), {'{power}'}, {'{speed}'} and {'{hr}'} are filled in.</small>}
+          </label>
+        )}
+        {smart.kind === 'homeassistant' && (
+          <>
+            <label className="field">
+              <span>Long-lived access token</span>
+              <input type="password" value={token} placeholder="kept in the system keychain" onChange={(e) => setToken(e.target.value)} onBlur={() => token && void api.smart.setToken(token).then(() => (setToken(''), setStatus('Token saved.')))} />
+            </label>
+            <label className="field">
+              <span>Fan entity</span>
+              <input value={smart.fanEntity} onChange={(e) => set({ fanEntity: e.target.value.trim() })} placeholder="fan.desk_fan or switch.fan_plug" />
+            </label>
+            <label className="field">
+              <span>Light entity</span>
+              <input value={smart.lightEntity} onChange={(e) => set({ lightEntity: e.target.value.trim() })} placeholder="light.pain_cave" />
+            </label>
+          </>
+        )}
+        {smart.kind !== 'none' && (
+          <>
+            <label className="field">
+              <span>Fan follows</span>
+              <select value={smart.fanBy} onChange={(e) => set({ fanBy: e.target.value as Settings['smart']['fanBy'] })}>
+                <option value="speed">Speed</option>
+                <option value="power">Power</option>
+                <option value="hr">Heart rate</option>
+              </select>
+            </label>
+            <Num label="Fan on from" value={smart.fanFrom} min={0} max={1000} suffix={unit} onChange={(v) => set({ fanFrom: v })} />
+            <Num label="Full speed at" value={smart.fanFull} min={0} max={1000} suffix={unit} onChange={(v) => set({ fanFull: v })} />
+          </>
+        )}
+      </div>
+      {smart.kind !== 'none' && (
+        <button
+          onClick={() => {
+            setStatus('Fan on full for five seconds…')
+            void api.smart.test().then(
+              () => setStatus('Test sent. Did the fan come on and go off again?'),
+              (err) => setStatus(errorText(err))
+            )
+          }}
+        >
+          Test
+        </button>
+      )}
+      {status && <div className="muted small">{status}</div>}
+    </section>
+  )
+}
+
 export function SettingsScreen(): React.JSX.Element {
   const { settings, update } = useSettings()
   const rider = (patch: Partial<Settings['rider']>): void => update((s) => ({ ...s, rider: { ...s.rider, ...patch } }))
   const physics = (patch: Partial<Settings['physics']>): void => update((s) => ({ ...s, physics: { ...s.physics, ...patch } }))
   const trainer = (patch: Partial<Settings['trainer']>): void => update((s) => ({ ...s, trainer: { ...s.trainer, ...patch } }))
+  const look = (patch: Partial<Settings['look']>): void => update((s) => ({ ...s, look: { ...s.look, ...patch } }))
+  const goal = (patch: Partial<Settings['goal']>): void => update((s) => ({ ...s, goal: { ...s.goal, ...patch } }))
 
   return (
     <div className="settings">
@@ -284,6 +368,25 @@ export function SettingsScreen(): React.JSX.Element {
             hint="How much of the real gradient your trainer applies. Your virtual speed always uses the full gradient."
             onChange={(v) => trainer({ difficulty: v / 100 })}
           />
+          <Num
+            label="Steepest gradient"
+            value={Math.round(settings.trainer.maxGrade * 100)}
+            min={0}
+            max={30}
+            suffix="%"
+            hint="The trainer never goes steeper than this (after difficulty). 0 means no limit."
+            onChange={(v) => trainer({ maxGrade: v / 100 })}
+          />
+          <Num
+            label="Downhill feel"
+            value={Math.round(settings.trainer.downhill * 100)}
+            min={0}
+            max={100}
+            step={5}
+            suffix="%"
+            hint="Share of descents passed on, so you don't spin out on the way down."
+            onChange={(v) => trainer({ downhill: v / 100 })}
+          />
           <Num label="Drag area (CdA)" value={settings.physics.cda} min={0.15} max={0.7} step={0.01} suffix="m²" hint="≈0.32 on the hoods, 0.25 in an aero tuck." onChange={(v) => physics({ cda: v })} />
           <Num label="Rolling resistance (Crr)" value={settings.physics.crr} min={0.002} max={0.02} step={0.0005} hint="0.004 road tyres on tarmac, 0.008 gravel." onChange={(v) => physics({ crr: v })} />
           <Num label="Descent speed limit" value={settings.physics.maxSpeedKph} min={30} max={120} suffix="km/h" hint="Stands in for braking into corners." onChange={(v) => physics({ maxSpeedKph: v })} />
@@ -293,6 +396,12 @@ export function SettingsScreen(): React.JSX.Element {
           hint="For basic (non-smart) trainers with no power meter. Uses a typical fluid-trainer curve, so treat the watts as approximate."
           value={settings.trainer.virtualPower}
           onChange={(v) => trainer({ virtualPower: v })}
+        />
+        <Toggle
+          label="Hold workout targets (ERG)"
+          hint="During a structured workout the trainer sets the resistance for each target. Off: targets are shown, and the gradient sets the resistance."
+          value={settings.trainer.workoutErg}
+          onChange={(v) => trainer({ workoutErg: v })}
         />
       </section>
 
@@ -316,6 +425,48 @@ export function SettingsScreen(): React.JSX.Element {
           value={settings.scenery}
           onChange={(v) => update((s) => ({ ...s, scenery: v }))}
         />
+        <div className="fields">
+          <label className="field">
+            <span>Time of day</span>
+            <select value={settings.look.timeOfDay} onChange={(e) => look({ timeOfDay: e.target.value as Settings['look']['timeOfDay'] })}>
+              <option value="dawn">Dawn</option>
+              <option value="day">Day</option>
+              <option value="evening">Evening</option>
+              <option value="dusk">Dusk</option>
+              <option value="night">Night</option>
+              <option value="clock">Same as now</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Weather</span>
+            <select value={settings.look.weather} onChange={(e) => look({ weather: e.target.value as Settings['look']['weather'] })}>
+              <option value="clear">Clear</option>
+              <option value="cloudy">Cloudy</option>
+              <option value="rain">Rain</option>
+              <option value="fog">Fog</option>
+              <option value="snow">Snow</option>
+              <option value="live">The weather there right now</option>
+            </select>
+          </label>
+        </div>
+        <Toggle
+          label="Place names, summits and points of interest"
+          hint="Village signs, summit boards with the climb's height, cafés, viewpoints and more along the route, from OpenStreetMap."
+          value={settings.look.landmarks}
+          onChange={(v) => look({ landmarks: v })}
+        />
+        <Toggle
+          label="Street-level photos from Mapillary"
+          hint="Shows real photos taken along the road, where Mapillary has them. Needs a free client token from mapillary.com/dashboard/developers."
+          value={settings.look.photos}
+          onChange={(v) => look({ photos: v })}
+        />
+        {settings.look.photos && (
+          <label className="field">
+            <span>Mapillary client token</span>
+            <input type="password" value={settings.look.mapillaryToken} placeholder="MLY|…" onChange={(e) => look({ mapillaryToken: e.target.value.trim() })} />
+          </label>
+        )}
         <Toggle
           label="Pace riders"
           hint="Computer riders holding a steady power to chase or drop."
@@ -338,6 +489,42 @@ export function SettingsScreen(): React.JSX.Element {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="card">
+        <h2>Season goal</h2>
+        <div className="fields">
+          <label className="field">
+            <span>Name</span>
+            <input value={settings.goal.name} onChange={(e) => goal({ name: e.target.value })} />
+          </label>
+          <Num label="Distance" value={settings.goal.distanceKm} min={0} max={50000} step={50} suffix="km" onChange={(v) => goal({ distanceKm: v })} />
+          <label className="field">
+            <span>Counting from</span>
+            <input type="date" value={settings.goal.from} onChange={(e) => goal({ from: e.target.value })} />
+            <small>Empty: 1 September.</small>
+          </label>
+          <label className="field">
+            <span>Deadline</span>
+            <input type="date" value={settings.goal.deadline} onChange={(e) => goal({ deadline: e.target.value })} />
+            <small>Empty: the first day of spring (20 March).</small>
+          </label>
+        </div>
+      </section>
+
+      <FanCard />
+
+      <section className="card">
+        <h2>Group rides</h2>
+        <p className="muted">
+          Riding together goes through a small relay server that passes everyone's position around. Anyone can run one: it is the{' '}
+          <code>wintermiles-relay</code> program in this app's source (<code>cargo run --release -p wintermiles-relay</code>), and needs port 47800 open. Everyone in the group
+          enters the same address here.
+        </p>
+        <label className="field">
+          <span>Relay address</span>
+          <input value={settings.group.relayUrl} onChange={(e) => update((s) => ({ ...s, group: { relayUrl: e.target.value.trim() } }))} placeholder="ws://relay.example.org:47800" />
+        </label>
       </section>
 
       <StravaCard />

@@ -4,9 +4,12 @@
 mod mapdata;
 mod commands;
 mod devices;
+mod group;
 mod health;
+mod library;
 mod secrets;
 mod session;
+mod smart;
 mod store;
 mod strava;
 mod terrain;
@@ -95,6 +98,23 @@ fn main() {
             commands::terrain_far,
             commands::ride_toggle_pause,
             commands::ride_update_settings,
+            commands::ride_intensity,
+            commands::ride_skip_step,
+            commands::strava_activities,
+            commands::segments_fetch,
+            commands::segments_list,
+            commands::workouts_list,
+            commands::workouts_import_dialog,
+            commands::workout_import_text,
+            commands::workout_delete,
+            commands::ghosts_list,
+            commands::ghost_import_file,
+            commands::ghost_import_strava,
+            commands::ghost_delete,
+            commands::fitness_overview,
+            commands::group_fetch_route,
+            commands::smart_set_token,
+            commands::smart_test,
             commands::ride_finish,
             commands::ride_abort,
             commands::strava_status,

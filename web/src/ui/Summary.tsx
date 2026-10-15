@@ -59,9 +59,10 @@ export function StravaUpload({ ride, auto }: { ride: RideSummary; auto?: boolean
 }
 
 export function Summary({ ride, onDone }: { ride: RideSummary; onDone: () => void }): React.JSX.Element {
-  const { settings } = useSettings()
+  const { settings, update } = useSettings()
   const u = settings.units
   const badges = useBadges()
+  const est = ride.ftpEstimate
   const stat = (label: string, value: string): React.JSX.Element => (
     <div className="stat">
       <div className="stat-value">{value}</div>
@@ -87,6 +88,20 @@ export function Summary({ ride, onDone }: { ride: RideSummary; onDone: () => voi
         {ride.avgCadence > 0 && stat('Cadence', `${Math.round(ride.avgCadence)} rpm`)}
         {stat('TSS', ride.tss.toFixed(0))}
       </div>
+      {ride.workout && <div className="pb-banner dim">Workout: {ride.workout}</div>}
+      {ride.segmentPrs.length > 0 && <div className="pb-banner">⏱ New segment best{ride.segmentPrs.length > 1 ? 's' : ''}: {ride.segmentPrs.join(', ')}</div>}
+      {est && (
+        <div className="pb-banner">
+          This ride suggests an FTP of <b>{est.watts} W</b> ({est.method}).{' '}
+          {settings.rider.ftp !== est.watts ? (
+            <button className="small" onClick={() => update((s) => ({ ...s, rider: { ...s.rider, ftp: est.watts } }))}>
+              Set FTP to {est.watts} W (now {settings.rider.ftp} W)
+            </button>
+          ) : (
+            <span>Saved.</span>
+          )}
+        </div>
+      )}
       <div className="card reward">
         <div className="xp">+{ride.xp} XP</div>
         {ride.newBadges.length > 0 && (

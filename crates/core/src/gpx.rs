@@ -115,6 +115,54 @@ pub fn parse_gpx(text: &str) -> Result<(String, Vec<RawPoint>), String> {
     Ok((name, points))
 }
 
+/// Parses an ISO 8601 / RFC 3339 timestamp (as GPX uses) into Unix seconds.
+pub fn parse_iso_time(t: &str) -> Option<f64> {
+    let t = t.trim();
+    let num = |a: usize, b: usize| t.get(a..b)?.parse::<i64>().ok();
+    let (y, mo, d, h, mi) = (num(0, 4)?, num(5, 7)?, num(8, 10)?, num(11, 13)?, num(14, 16)?);
+    let rest = t.get(17..)?;
+    let sec_end = rest.find(|c: char| c != '.' && !c.is_ascii_digit()).unwrap_or(rest.len());
+    let sec: f64 = rest[..sec_end].parse().ok()?;
+    let zone = &rest[sec_end..];
+    let offset = match zone {
+        "" | "Z" | "z" => 0,
+        z if z.len() >= 6 => {
+            let sign = if z.starts_with('-') { -1 } else { 1 };
+            sign * (z.get(1..3)?.parse::<i64>().ok()? * 3600 + z.get(4..6)?.parse::<i64>().ok()? * 60)
+        }
+        _ => return None,
+    };
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some((days * 86_400 + h * 3600 + mi * 60 - offset) as f64 + sec)
+}
+
+/// Track points that carry a time, as `(unix seconds, lat, lon)`, for replaying a recorded ride.
+pub fn parse_gpx_track_times(text: &str) -> Result<Vec<(f64, f64, f64)>, String> {
+    let text = text.trim_start_matches('\u{feff}');
+    let opts = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    let doc = roxmltree::Document::parse_with_options(text, opts).map_err(|e| format!("This is not a valid GPX file ({e})."))?;
+    let points: Vec<(f64, f64, f64)> = doc
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "trkpt")
+        .filter_map(|n| {
+            let lat: f64 = n.attribute("lat")?.trim().parse().ok()?;
+            let lon: f64 = n.attribute("lon")?.trim().parse().ok()?;
+            let time = n.children().find(|c| c.is_element() && c.tag_name().name() == "time")?.text()?;
+            Some((parse_iso_time(time)?, lat, lon))
+        })
+        .collect();
+    if points.len() < 10 {
+        return Err("This GPX file has no timed track — it needs to be a recorded ride, not a planned route.".into());
+    }
+    Ok(points)
+}
+
 fn box_smooth(src: &[f32], radius: usize, wrap: bool) -> Vec<f32> {
     let n = src.len();
     if wrap && n > 2 * radius + 1 {
