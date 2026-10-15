@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build:web"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -18,7 +19,7 @@
         "height": 860,
         "minWidth": 1000,
         "minHeight": 640,
-        "backgroundColor": "#0e1116",
+        "transparent": true,
         "dragDropEnabled": false
       }
     ],

@@ -84,4 +84,4 @@ export function useBadges(): Badge[] {
 }
 
 /** Set by the ride screen while a 3D view exists, so the automated check can grab a frame. */
-export const smokeHooks: { capture: (() => string) | null; state: unknown; world: unknown } = { capture: null, state: null, world: null }
+export const smokeHooks: { capture: (() => string) | null; state: unknown; world: unknown; native: boolean } = { capture: null, state: null, world: null, native: false }

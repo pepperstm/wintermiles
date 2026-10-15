@@ -277,15 +277,78 @@ pub fn ride_update_settings(state: State<AppState>, settings: Settings) {
 /// Ends the ride and saves it. Resolves to `null` if it was too short to keep.
 #[tauri::command]
 pub async fn ride_finish(state: State<'_, AppState>) -> Res<Option<RideSummary>> {
+    if let Some(n) = state.native.lock().unwrap().take() {
+        n.stop();
+    }
     let Some(session) = state.session.lock().unwrap().take() else { return Ok(None) };
     session.finish(&state.store)
 }
 
 #[tauri::command]
 pub fn ride_abort(state: State<AppState>) {
+    if let Some(n) = state.native.lock().unwrap().take() {
+        n.stop();
+    }
     if let Some(session) = state.session.lock().unwrap().take() {
         session.halt();
     }
+}
+
+// ── Native renderer ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn native_available() -> bool {
+    cfg!(target_os = "macos")
+}
+
+/// Starts drawing the ride natively. The body is the page's drawing data (see `native::parse_assets`).
+#[tauri::command]
+pub async fn native_start(app: AppHandle, state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> Res<()> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Expected the drawing data as bytes.".into()) };
+    let session = state.current_session()?;
+    if let Some(old) = state.native.lock().unwrap().take() {
+        old.stop();
+    }
+    let (world, engine, bytes) = (session.world.clone(), session.engine(), bytes.clone());
+    let made = tauri::async_runtime::spawn_blocking(move || crate::native::Native::start(&app, world, engine, &bytes)).await.map_err(blocking_err)??;
+    *state.native.lock().unwrap() = Some(made);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn native_stop(state: State<'_, AppState>) -> Res<()> {
+    let native = state.native.lock().unwrap().take();
+    if let Some(n) = native {
+        tauri::async_runtime::spawn_blocking(move || n.stop()).await.map_err(blocking_err)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn native_camera(state: State<AppState>, index: Option<usize>) {
+    if let Some(n) = state.native.lock().unwrap().as_ref() {
+        match index {
+            Some(i) => n.set_camera(i),
+            None => n.cycle_camera(),
+        }
+    }
+}
+
+#[tauri::command]
+pub fn native_look(state: State<AppState>, look: crate::native::Look) {
+    if let Some(n) = state.native.lock().unwrap().as_ref() {
+        n.set_look(look);
+    }
+}
+
+/// For the automated check: saves the next native frame next to its report; returns frames drawn so far.
+#[tauri::command]
+pub fn native_capture(state: State<AppState>) -> Res<(u64, Option<String>)> {
+    let path = std::env::var_os("WM_SMOKE").map(PathBuf::from).ok_or("Only during the automated check.")?;
+    let native = state.native.lock().unwrap();
+    let n = native.as_ref().ok_or("The native renderer is not running.")?;
+    n.capture(path.with_extension("native.png"));
+    Ok(n.frames())
 }
 
 // ── Strava ─────────────────────────────────────────────────────────────────

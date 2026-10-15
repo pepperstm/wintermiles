@@ -1199,3 +1199,14 @@ button.small {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* The native renderer draws beneath the page: let it show through. */
+html:has(body.native-3d),
+body.native-3d,
+body.native-3d #root,
+body.native-3d .ride {
+  background: transparent !important;
+}
+body.native-3d canvas.world {
+  visibility: hidden;
+}

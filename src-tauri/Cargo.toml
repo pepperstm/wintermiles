@@ -11,7 +11,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 fitparser = "0.9"
 wintermiles-core = { path = "../crates/core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
@@ -27,8 +27,19 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"
+# The native 3D renderer (an alternative to the webview's three.js).
+wgpu = "25"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+raw-window-handle = "0.6"
 
 # Strava tokens go in the OS keychain where one is reliably available.
+# The native renderer's own view, beneath the web page.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSResponder", "NSWindow", "NSGraphics"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 

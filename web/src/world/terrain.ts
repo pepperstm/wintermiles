@@ -29,7 +29,7 @@ function buildTreeGeometry(): THREE.BufferGeometry {
  * except for the window itself; the bottom-left corner is plain wall, which
  * roofs and gables point at.
  */
-function windowTexture(): THREE.CanvasTexture {
+export function windowTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = 64
   canvas.height = 64
@@ -56,7 +56,7 @@ function windowTexture(): THREE.CanvasTexture {
  * a broken centre line, for main roads (their edge lines are geometry); the rest
  * is blank, for everything whose colour comes from its vertices alone.
  */
-function waysTexture(): THREE.CanvasTexture {
+export function waysTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = 128
   canvas.height = 64

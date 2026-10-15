@@ -4,7 +4,8 @@ import { sampleAt, type Route, type RoutePos } from '../core/gpx'
 import type { Landmark, WorldLayout } from '../types'
 import { RiderModel } from './rider'
 import { Terrain } from './terrain'
-import { look, Precipitation, type Look } from './weather'
+import { packNative } from './native'
+import { Precipitation, type Look } from './weather'
 
 export interface WorldRival {
   id: string
@@ -78,7 +79,7 @@ const POI_ICON: Record<string, string> = {
   attraction: '★'
 }
 
-function roadTexture(): THREE.CanvasTexture {
+export function roadTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = 256
   canvas.height = 256
@@ -249,6 +250,17 @@ export class World {
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
     const dim = (sample: number): number => 1 - 0.62 * this.cover(sample * this.route.step, 12)
     this.scene.add(buildRoad(road, this.route.n, this.layout.roadSection, texture, dim), ...buildStructures(structures))
+  }
+
+  /** Everything the native renderer needs from this scene (see `native.ts`). */
+  nativeAssets(rivals: { id: string; name: string; kind: string }[], l: Look): Uint8Array {
+    const tags = rivals.map((r) => {
+      const sprite = textSprite(r.name, r.kind === 'ghost' ? 'rgba(255,255,255,0.25)' : 'rgba(20,24,32,0.7)')
+      sprite.scale.set(sprite.userData.aspect, 1, 1)
+      return { sprite, rider: r.id }
+    })
+    const skip = (o: THREE.Object3D): boolean => o === this.sky || o === this.terrain.group || o === this.rider.group || o === this.precipitation?.object
+    return packNative(this.scene, skip, tags, l)
   }
 
   /** Sets the time of day and weather. */

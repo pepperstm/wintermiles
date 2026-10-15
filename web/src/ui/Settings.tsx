@@ -468,6 +468,12 @@ export function SettingsScreen(): React.JSX.Element {
           </label>
         )}
         <Toggle
+          label="Native renderer (experimental, macOS)"
+          hint="Draws the 3D world straight on the graphics card (Metal) instead of inside the app's web page, for lower overhead. Not yet drawn natively: rain and snow particles, and the riders' shadows."
+          value={settings.nativeRenderer}
+          onChange={(v) => update((s) => ({ ...s, nativeRenderer: v }))}
+        />
+        <Toggle
           label="Pace riders"
           hint="Computer riders holding a steady power to chase or drop."
           value={settings.bots.enabled}

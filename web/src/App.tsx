@@ -38,9 +38,16 @@ async function runSmoke(setScreen: (s: Screen) => void): Promise<void> {
     if (smoke.screen === 'devices') await api.devices.demoAdd()
     setScreen({ name: smoke.screen })
   }
-  setTimeout(() => {
+  setTimeout(async () => {
+    // The native renderer saves its own picture of the next frame.
+    let native = ''
+    if (smokeHooks.native) {
+      const [frames, error] = await api.native.capture()
+      await new Promise((r) => setTimeout(r, 600))
+      native = `\n--- native frames drawn: ${frames}${error ? ` (error: ${error})` : ''}`
+    }
     const tiles = document.querySelectorAll('.leaflet-tile-loaded').length
-    const info = `${document.body.innerText}\n\n--- map tiles loaded: ${tiles}\n--- world: ${JSON.stringify(smokeHooks.world)}\n--- frames drawn: ${(smokeHooks.world as { frames?: () => number } | null)?.frames?.() ?? 0}\n--- last ride state: ${JSON.stringify(smokeHooks.state)}`
+    const info = `${document.body.innerText}\n\n--- map tiles loaded: ${tiles}\n--- world: ${JSON.stringify(smokeHooks.world)}\n--- frames drawn: ${(smokeHooks.world as { frames?: () => number } | null)?.frames?.() ?? 0}\n--- last ride state: ${JSON.stringify(smokeHooks.state)}${native}`
     void api.smoke.done(smokeHooks.capture?.() ?? null, info)
   }, smoke.ms)
 }

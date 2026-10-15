@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod mapdata;
+mod native;
 mod photos;
 mod commands;
 mod devices;
@@ -41,6 +42,8 @@ pub struct AppState {
     pub ant: Ant,
     pub demo: Arc<DemoRider>,
     pub session: Mutex<Option<Arc<Session>>>,
+    /// The native renderer, while a ride uses it.
+    pub native: Mutex<Option<native::Native>>,
     pub http: reqwest::Client,
 }
 
@@ -68,6 +71,7 @@ fn main() {
                 ant: Ant::default(),
                 demo: Arc::new(DemoRider::default()),
                 session: Mutex::new(None),
+                native: Mutex::new(None),
                 http,
             });
             Ok(())
@@ -123,6 +127,12 @@ fn main() {
             commands::weather_now,
             commands::ride_photos,
             commands::photo_image,
+            commands::native_start,
+            commands::native_stop,
+            commands::native_camera,
+            commands::native_look,
+            commands::native_capture,
+            commands::native_available,
             commands::ride_finish,
             commands::ride_abort,
             commands::strava_status,

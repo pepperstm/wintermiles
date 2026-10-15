@@ -99,6 +99,14 @@ export const api = {
     forRide: () => invoke<{ distance: number; id: string; url: string; capturedAt: number }[]>('ride_photos'),
     image: (url: string) => invoke<string>('photo_image', { url })
   },
+  native: {
+    available: () => invoke<boolean>('native_available'),
+    start: (assets: Uint8Array) => invoke<void>('native_start', assets),
+    stop: () => invoke<void>('native_stop'),
+    camera: (index?: number) => invoke<void>('native_camera', { index: index ?? null }),
+    look: (look: Record<string, unknown>) => invoke<void>('native_look', { look }),
+    capture: () => invoke<[number, string | null]>('native_capture')
+  },
   weatherNow: (lat: number, lon: number) => invoke<number>('weather_now', { lat, lon }),
   stravaActivities: () => invoke<StravaActivity[]>('strava_activities'),
   fitness: () => invoke<FitnessOverview>('fitness_overview'),

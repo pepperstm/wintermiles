@@ -18,6 +18,8 @@ export interface Settings {
   look: { timeOfDay: TimeOfDay; weather: Weather; landmarks: boolean; photos: boolean; mapillaryToken: string }
   smart: { kind: 'none' | 'homeassistant' | 'shelly' | 'tasmota' | 'webhook'; url: string; fanEntity: string; lightEntity: string; fanBy: 'speed' | 'power' | 'hr'; fanFrom: number; fanFull: number }
   group: { relayUrl: string }
+  /** Draw the 3D world with the GPU directly instead of in the page (macOS, experimental). */
+  nativeRenderer: boolean
 }
 
 export type TimeOfDay = 'dawn' | 'day' | 'evening' | 'dusk' | 'night' | 'clock'
@@ -37,7 +39,8 @@ export const DEFAULT_SETTINGS: Settings = {
   goal: { name: 'Winter miles', distanceKm: 1000, deadline: '', from: '' },
   look: { timeOfDay: 'day', weather: 'clear', landmarks: true, photos: false, mapillaryToken: '' },
   smart: { kind: 'none', url: '', fanEntity: '', lightEntity: '', fanBy: 'speed', fanFrom: 10, fanFull: 35 },
-  group: { relayUrl: 'ws://127.0.0.1:47800' }
+  group: { relayUrl: 'ws://127.0.0.1:47800' },
+  nativeRenderer: false
 }
 
 export interface RouteMeta {

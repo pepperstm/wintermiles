@@ -311,6 +311,10 @@ impl Session {
         Ok((session, init))
     }
 
+    pub fn engine(&self) -> Arc<Mutex<RideEngine>> {
+        self.engine.clone()
+    }
+
     pub fn toggle_pause(&self) {
         let mut engine = self.engine.lock().unwrap();
         engine.user_paused = !engine.user_paused;

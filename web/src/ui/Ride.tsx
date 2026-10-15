@@ -104,7 +104,8 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
         const imperial = settingsRef.current.units === 'imperial'
         const world = new World(canvas, loaded, started.layout, started.covered, (i) => `${i} ${imperial ? 'mi' : 'km'}`, imperial ? 1609.344 : 1000, started.landmarks)
         worldRef.current = world
-        await world.load()
+        const native = settingsRef.current.nativeRenderer && (await api.native.available())
+        if (!native) await world.load()
         if (disposed) return
         const lookCfg = settingsRef.current.look
         const time = lookCfg.timeOfDay === 'clock' ? timeFromHour(started.hour) : lookCfg.timeOfDay
@@ -113,14 +114,28 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
           // The weather there right now; if it can't be had, a clear day.
           weather = await api.weatherNow(started.centre[0], started.centre[1]).then(weatherFromCode, () => 'clear' as const)
         }
-        world.setLook(look(time, weather))
+        const theLook = look(time, weather)
+        world.setLook(theLook)
+        if (native) {
+          // The GPU draws the world natively beneath this page; the page only shows the HUD.
+          try {
+            await api.native.start(world.nativeAssets(started.rivals, theLook))
+            if (disposed) return void api.native.stop()
+            nativeRef.current = true
+            document.body.classList.add('native-3d')
+          } catch (err) {
+            void api.log(`native renderer unavailable, using the built-in one: ${errorText(err)}`)
+            await world.load()
+          }
+        }
         observer = new ResizeObserver(() => world.resize(canvas.clientWidth, canvas.clientHeight))
         observer.observe(canvas)
         world.resize(canvas.clientWidth, canvas.clientHeight)
         smokeHooks.capture = () => world.capture()
-        smokeHooks.world = { realTerrain: started.realTerrain, buildings: started.buildings, scenery: started.scenery, covered: started.covered, frames: () => frames }
+        smokeHooks.world = { realTerrain: started.realTerrain, buildings: started.buildings, scenery: started.scenery, covered: started.covered, native: nativeRef.current, frames: () => frames }
+        smokeHooks.native = nativeRef.current
         const smoke = await api.smoke.config()
-        for (let i = 0; i < (smoke?.camera ?? 0); i++) world.cycleCamera()
+        for (let i = 0; i < (smoke?.camera ?? 0); i++) cycleCamera()
 
         let latest: { s: RideState; at: number } | null = null
         let received = 0
@@ -142,7 +157,7 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
           raf = requestAnimationFrame(loop)
           const dt = Math.min(0.1, (now - last) / 1000)
           last = now
-          if (!latest) return
+          if (!latest || nativeRef.current) return
           const s = latest.s
           // Glide between state updates so motion is smooth at any display refresh rate.
           const ahead = s.moving ? Math.min(0.25, (now - latest.at) / 1000) : 0
@@ -189,6 +204,12 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
       offState?.()
       offLoading()
       smokeHooks.capture = null
+      smokeHooks.native = false
+      if (nativeRef.current) {
+        nativeRef.current = false
+        document.body.classList.remove('native-3d')
+        void api.native.stop()
+      }
       worldRef.current?.dispose()
       worldRef.current = null
       // Harmless if the ride was already finished and saved.
@@ -198,9 +219,14 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId, finish])
 
+  const nativeRef = useRef(false)
   const workoutRef = useRef(false)
   workoutRef.current = Boolean(init?.workout)
   const togglePause = (): void => void api.ride.togglePause()
+  function cycleCamera(): void {
+    if (nativeRef.current) void api.native.camera()
+    else worldRef.current?.cycleCamera()
+  }
   const setTrainer = (patch: Partial<typeof settings.trainer>): void => update((s) => ({ ...s, trainer: { ...s.trainer, ...patch } }))
   const nudge = (delta: number): void => {
     const cfg = settingsRef.current.trainer
@@ -212,7 +238,7 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === ' ') togglePause()
-      else if (e.key === 'c' || e.key === 'C') worldRef.current?.cycleCamera()
+      else if (e.key === 'c' || e.key === 'C') cycleCamera()
       else if (e.key === 'ArrowUp') nudge(10)
       else if (e.key === 'ArrowDown') nudge(-10)
       else return
@@ -491,7 +517,7 @@ export function Ride({ request, onExit, onDevices, onFinish }: Props): React.JSX
           <div className="hud bottom">
             <div className="controls">
               <button onClick={togglePause}>{hud.paused ? 'Resume' : 'Pause'}</button>
-              <button onClick={() => worldRef.current?.cycleCamera()}>Camera</button>
+              <button onClick={() => cycleCamera()}>Camera</button>
               {init.workout && hud.workout ? null : <div className="seg">
                 <button className={mode === 'sim' ? 'on' : ''} onClick={() => setTrainer({ mode: 'sim' })} title="Trainer resistance follows the gradient">
                   Gradient
