@@ -8,9 +8,15 @@ Open source (MIT) for **Windows, macOS and Linux**. Written in **Rust**, with a 
 
 - **GPX in, virtual ride out.** Import routes from Strava, Komoot, RideWithGPS or a bike computer. Routes with no elevation data (planner exports) get it filled in automatically.
 - **A 3D version of the real place.** The road follows your GPX; the surrounding landscape is built from open elevation data, so the mountains on the horizon are the real ones. OpenStreetMap supplies the rest: the towns and villages you pass through, forests where the real forests are, lakes, rivers and streams, the side roads, lanes, footpaths and railways around you, and the bridges and tunnels of the real road — you ride over the river on a bridge deck, into the hillside through a lit tunnel, and under the motorway or railway that crosses overhead. A live OpenStreetMap minimap and a gradient-coloured elevation profile sit alongside. Works offline with generated hills.
-- **Smart trainer control.** Gradient simulation (with a "trainer difficulty" setting) or ERG mode, over Bluetooth FTMS, Tacx FE-C-over-Bluetooth, or ANT+ FE-C.
+- **Find a route in the app.** Search for a place, click waypoints on the map and get a route along bike-friendly roads with real elevation (BRouter), or pick one of eight famous climbs (Alpe d'Huez, Mont Ventoux, Stelvio, Galibier, Tourmalet, Mortirolo, Zoncolan, Box Hill).
+- **Smart trainer control.** Gradient simulation or ERG mode, over Bluetooth FTMS, Tacx FE-C-over-Bluetooth, or ANT+ FE-C. The gradient "feel" scales the real slope, softens descents and caps the steepest pitch (so a 15% ramp is rideable on any trainer).
+- **Structured workouts on any route.** Import Zwift `.zwo`, `.erg` or `.mrc` files, or use the built-in sessions (endurance, sweet spot, threshold, VO₂max, over-unders, sprints and an FTP ramp test). The trainer holds each target in ERG while the route scrolls by; adjust the intensity or skip a step mid-ride.
+- **Fitness tracking.** Power curve (5 s to 1 h), an FTP estimate you can apply in one click, power zones on the HUD, and a training-load chart of fitness, fatigue and form.
 - **Sensors.** Power meters, heart-rate straps, speed and cadence sensors over Bluetooth and ANT+. When several devices report the same metric the most direct one wins (crank power meter over trainer estimate, strap over relayed HR). Basic trainers with only a speed sensor can use estimated power.
-- **Gamification.** Race the ghost of your best time on each route, chase pace riders at fixed W/kg, get timed on every auto-detected climb (categorised 4 → HC), and earn XP, levels and badges.
+- **Gamification.** Race the ghost of your best time on each route, chase pace riders at fixed W/kg, and get timed on every auto-detected climb (categorised 4 → HC) and on the Strava segments along the route, with a live "ahead of / behind your best" gap. Race other people's rides as ghosts (GPX, FIT or from your Strava). A season goal (1,000 km by spring by default), week and day streaks, XP, levels and 23 badges.
+- **Group rides.** Ride a route together with friends: share a room code, everyone's rider appears in everyone's world. Goes through a tiny relay server anyone can run (`crates/relay`).
+- **Living world.** Village and town signs, summit boards named after the place at the top, and roadside cafés, fountains, bike shops and viewpoints from OpenStreetMap. Dawn, day, evening, dusk or night (with a lamp on the bike), and clear, cloudy, rain, fog or snow — or the weather at the real place right now. Optional street-level photos of the road from Mapillary (bring your own free token).
+- **Fan and lights.** A fan that speeds up with your speed, power or heart rate, and a light coloured by power zone, through Home Assistant, a Shelly or Tasmota plug, or any webhook.
 - **Recording and sharing.** Every ride is saved as a standard `.FIT` file (GPS, power, heart rate, cadence, laps, normalised power) and can be uploaded to Strava as a Virtual Ride in one click or automatically.
 - **Apple Health.** Import your Health export to set weight, FTP and max heart rate; use an Apple Watch as a live heart-rate sensor; send rides to Health via the FIT file. See [the limits](#apple-health-and-apple-watch) below.
 - **Demo rider.** A simulated rider and trainer so you can try everything with no hardware.
@@ -22,7 +28,10 @@ About two thirds of the code is Rust, and everything that computes or talks to h
 ```
 crates/core/      Pure Rust library, no I/O — fully unit-tested
   gpx, physics    GPX → resampled route, smoothing, gradients, climb detection; speed-from-power model
-  ride, gamify    The ride simulation and recorder; XP, levels, badges
+  ride, gamify    The ride simulation and recorder; XP, levels, badges, streaks
+  workout         Zwift .zwo and .erg/.mrc workouts; built-in sessions
+  fitness         Power curve, FTP estimate, zones, training load
+  segments        Strava segments and other rides matched onto the route; ghosts; photos
   fit             FIT activity encoder
   devices/        Bluetooth GATT and ANT+ protocol encode/decode; the sensor hub
   world/          Terrain: elevation tiles, height field, chunk / horizon / road meshes;
@@ -33,7 +42,11 @@ crates/core/      Pure Rust library, no I/O — fully unit-tested
 src-tauri/        The app (Rust, Tauri 2)
   devices/        Bluetooth via the OS stack (btleplug); ANT+ USB stick via libusb; demo rider
   session         50 Hz simulation loop, trainer control, saving rides
-  terrain, mapdata, strava, health, store, secrets
+  native/         The optional native renderer (wgpu → Metal) and its shaders
+  group, smart    Group-ride client; fan and light control
+  library, geo    Workouts, ghosts, segments, goal; place search and route planning
+  terrain, mapdata, photos, strava, health, store, secrets
+crates/relay/     The group-ride relay server (WebSocket, stateless)
 web/              The window contents (TypeScript, React, three.js)
   world/          Uploads the meshes Rust produced to the GPU; camera; rider models
   ui/             Screens and the ride HUD
@@ -48,7 +61,7 @@ Measured on an Apple Silicon Mac, against the earlier Electron/TypeScript protot
 | App bundle | 290 MB | **11 MB** |
 | Memory during a ride with real terrain | not measured | ~95 MB app + ~140 MB system webview processes |
 
-A fully native renderer (wgpu or Bevy) could replace the web layer later; because the core crate has no dependency on the shell, that is a contained change.
+**Native renderer (experimental, macOS).** Settings → Virtual world → *Native renderer* draws the 3D world straight on the GPU (Metal, through wgpu) in a view beneath the web page, which then only shows the HUD. It draws everything the built-in renderer does, with the same lighting, fog, time of day and weather, except rain and snow particles and the riders' road shadows. It holds 60 fps and pauses while the window is covered. In a debug build with the window in front, both renderers used about the same CPU while the native one drew about 1.6 times as many frames (it was not yet capped at 60). A like-for-like release-build comparison is still to be done. Windows and Linux need a different way to put the GPU view under the web page, so there it is not offered yet.
 
 ## Project status
 
@@ -56,7 +69,13 @@ Be aware of what has and has not been proven:
 
 | Area | Status |
 | --- | --- |
-| GPX parsing, route building, climb detection, physics, ride recording, gamification, terrain, building and scenery generation, Health export scanning | Unit-tested (`cargo test`, 49 tests) |
+| GPX parsing, route building, climb detection, physics, ride recording, gamification, terrain, building and scenery generation, Health export scanning, workouts, fitness maths, segment and ghost matching, landmarks, photo selection | Unit-tested (`cargo test`, 64 core tests) |
+| Group-ride relay | Tested in-process (`cargo test -p wintermiles-relay`) and with two app instances riding together through a local relay |
+| Fan and lights | Requests checked against a pretend device for Home Assistant, Shelly and a webhook; not tried with real plugs |
+| Route finder, famous climbs | All eight climbs planned through the live BRouter service and checked against their known length and height gain |
+| Strava segments and ghosts from Strava | Matching is unit-tested; the Strava calls have **not** been made against the live API |
+| Street-level photos | Selection unit-tested and a bad token is reported correctly; not tried with a real Mapillary token |
+| Native renderer | Screenshots from the automated run match the built-in renderer (day, dusk with rain fog, high camera). The HUD on top of it was not checked in a screenshot of the real window |
 | FIT export | Unit-tested by decoding the output with an independent FIT parser |
 | Bluetooth and ANT+ **protocol** encoding/decoding (FTMS, Cycling Power, CSC, HR, ANT framing, ANT+ HR/power/speed/cadence/FE-C pages) | Unit-tested against hand-built packets |
 | Full app: import → real-terrain download → ride → save FIT → personal best → summary | Verified by automated runs with the demo rider on macOS (Apple Silicon), in debug, dev-server and release builds |
@@ -66,7 +85,7 @@ Be aware of what has and has not been proven:
 | Bluetooth and ANT+ with **real hardware** | **Not yet tested.** Written to the published specifications, but no trainer, sensor or ANT+ stick has been connected to it — not even a scan has been run. Expect to find bugs; please report them with your device model. |
 | Strava connect and upload | **Not yet tested against the live API** (needs a personal API key). |
 | Apple Health import | Scanner unit-tested; not yet run on a real multi-GB export. |
-| Windows and Linux | **Not yet built or run.** All dependencies are cross-platform, but only macOS has been exercised. |
+| Windows and Linux | **Built** (installers: `.msi`/`.exe`, `.deb`/`.AppImage`) by GitHub Actions on every push, which also runs the tests on Linux. **Not yet run** on either. |
 
 ## Getting started
 
@@ -84,7 +103,9 @@ npm run build      # optimised app + installer for this platform (target/release
 
 Then: **Routes → Import GPX…**, **Devices → connect your trainer**, and press **Ride**. No hardware handy? Press Ride on the built-in Demo Loop and choose **Use demo rider** (↑/↓ change its effort).
 
-Ride keys: `Space` pause · `C` camera (behind, high behind, alongside, overhead) · `↑`/`↓` ERG target (or demo rider effort).
+Ride keys: `Space` pause · `C` camera (behind, high behind, alongside, overhead) · `↑`/`↓` ERG target, workout intensity or demo rider effort.
+
+Group rides: run `cargo run --release -p wintermiles-relay` on a machine everyone can reach (port 47800), put its address (`ws://host:47800`) in Settings → Group rides, tick *Ride with friends* when starting, and give the room code to the others (Routes → *Join a group ride*).
 
 To inspect a recorded ride: `cargo run -p wintermiles-core --example fitinfo -- path/to/ride.fit`.
 
@@ -150,15 +171,15 @@ Direct two-way sync would need a companion iPhone app using HealthKit. That is t
 
 - Hardware testing across trainers and sensors; pairing to specific ANT+ devices; multiple devices per type
 - Companion iPhone/Apple Watch app for real HealthKit sync and native watch heart rate
-- Native renderer in place of the webview
-- Structured workouts (ERG intervals) along a route
+- Native renderer: rain and snow, shadows, Windows and Linux, and making it the default
+- A public group-ride relay, so friends needn't run their own
 - More from OpenStreetMap: mapped roof shapes, other land cover (farmland, rock, glaciers), broadleaf trees, squares and car parks, cuttings and embankments for the side roads
-- Riding with friends over the network
 - Wahoo legacy protocol, steering and virtual gears
 
 ## Data and credits
 
 - Map tiles, building and scenery data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), via the OSM tile servers, the public [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) instances and [vector.openstreetmap.org](https://vector.openstreetmap.org). Heavy users should configure their own servers, per the OSM usage policies.
+- Place search by [Nominatim](https://nominatim.org) and route planning by [BRouter](https://brouter.de) (both OpenStreetMap-based); weather from [Open-Meteo](https://open-meteo.com); street-level photos from [Mapillary](https://www.mapillary.com) (CC BY-SA).
 - Terrain from the [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) open dataset (Tilezen/Mapzen; sources include SRTM, USGS 3DEP, EU-DEM and others).
 - ANT+ access uses the ANT+ managed network key, which is issued to ANT+ adopters. If you distribute builds, register as an adopter (free) at [thisisant.com](https://www.thisisant.com).
 
