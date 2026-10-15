@@ -58,7 +58,7 @@ Measured on an Apple Silicon Mac, against the earlier Electron/TypeScript protot
 
 | | Electron prototype | Rust + system webview |
 | --- | --- | --- |
-| App bundle | 290 MB | **11 MB** |
+| App bundle | 290 MB | **17 MB** (11 MB before the native renderer was added) |
 | Memory during a ride with real terrain | not measured | ~95 MB app + ~140 MB system webview processes |
 
 **Native renderer (experimental, macOS).** Settings → Virtual world → *Native renderer* draws the 3D world straight on the GPU (Metal, through wgpu) in a view beneath the web page, which then only shows the HUD. It draws everything the built-in renderer does, with the same lighting, fog, time of day and weather, except rain and snow particles and the riders' road shadows. It holds 60 fps and pauses while the window is covered. In a debug build with the window in front, both renderers used about the same CPU while the native one drew about 1.6 times as many frames (it was not yet capped at 60). A like-for-like release-build comparison is still to be done. Windows and Linux need a different way to put the GPU view under the web page, so there it is not offered yet.
